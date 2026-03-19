@@ -58,12 +58,25 @@ codex-worker는 반드시 tfx-route.sh를 통해 Codex에 위임하고, gemini-w
 
 리드는 워커의 Step 2, Step 4 시점에 턴 경계를 인식하고, 방향 전환/추가 지시/재실행 요청을 보낼 수 있다.
 
-## Bash timeout 동적 상속
+## Async 실행 프로토콜 (v2.5+)
 
-Bash timeout은 tfx-route.sh의 role/profile별 timeout + 60초 여유를 ms로 변환하여 동적 상속한다.
-`getRouteTimeout(role, mcpProfile)` 기준:
-- analyze/review 프로필 또는 architect/analyst 역할: 3600초
-- 그 외 기본: 1080초(18분)
+Claude Code Bash 도구는 최대 600초(10분) 하드코딩 제한이 있다.
+scientist(24분), scientist-deep(60분) 등 장시간 워커는 이 제한에 걸린다.
+
+**해결: `--async` 3단계 패턴**
+
+| 단계 | 명령 | Bash timeout | 소요 |
+|------|------|-------------|------|
+| 시작 | `tfx-route.sh --async {role} '{task}' {profile} {timeout}` | 15초 | <1초 |
+| 대기 | `tfx-route.sh --job-wait {job_id} 540` | 570초 | 최대 540초/회 |
+| 결과 | `tfx-route.sh --job-result {job_id}` | 30초 | <1초 |
+
+- `--job-wait`는 내부에서 15초 간격으로 폴링하며 `done`/`timeout`/`failed`/`still_running` 반환
+- `still_running` 시 같은 `--job-wait` 명령을 반복 (무한 반복 가능)
+- 실제 워커 timeout은 tfx-route.sh의 `timeout` 명령으로 관리 (Bash 도구와 무관)
+
+**이전 방식 (deprecated):**
+Bash timeout을 role/profile별 timeout + 60초로 설정했으나, 600초 초과 시 Bash 도구가 강제 종료했다.
 
 ## tfx-route.sh 팀 통합 동작
 

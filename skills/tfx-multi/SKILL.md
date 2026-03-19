@@ -170,7 +170,7 @@ status는 "completed"만 사용. 실패 여부는 `metadata.result`로 구분.
 
 | 항목 | 설명 |
 |------|------|
-| `scripts/tfx-route.sh` | 팀 통합 라우터 |
+| `scripts/tfx-route.sh` | 팀 통합 라우터 (v2.5: `--async`/`--job-wait`/`--job-status`/`--job-result`) |
 | `hub/team/native.mjs` | Native Teams 래퍼 (프롬프트 템플릿) |
 | `hub/pipeline/` | 파이프라인 상태 기계 (`--thorough` 모드) |
 | `tfx-auto` | one-shot 실행 오케스트레이터 |

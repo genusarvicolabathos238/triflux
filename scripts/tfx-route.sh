@@ -9,16 +9,110 @@
 #   - Gemini health check 지수 백오프 (30×1s → 5×exp)
 #   - 컨텍스트 파일 5번째 인자 지원
 #
-VERSION="2.4"
+VERSION="2.5"
 #
 # 사용법:
 #   tfx-route.sh <agent_type> <prompt> [mcp_profile] [timeout_sec] [context_file]
+#   tfx-route.sh --async <agent_type> <prompt> [mcp_profile] [timeout_sec] [context_file]
+#   tfx-route.sh --job-status <job_id>
+#   tfx-route.sh --job-result <job_id>
+#
+# --async: 백그라운드 실행, 즉시 job_id 반환 (Claude Code Bash 600초 제한 우회)
+# --job-status: running | done | timeout | failed
+# --job-result: 완료된 잡의 전체 출력
 #
 # 예시:
 #   tfx-route.sh executor "코드 구현" implement
-#   tfx-route.sh architect "아키텍처 분석" analyze '' context.md
+#   tfx-route.sh --async scientist "딥 리서치" auto 1440
+#   tfx-route.sh --job-status 1742400000-12345-9876
+#   tfx-route.sh --job-result 1742400000-12345-9876
 
 set -euo pipefail
+
+# ── Async Job 디렉토리 ──
+TFX_JOBS_DIR="${TMPDIR:-/tmp}/tfx-jobs"
+
+# ── --job-status / --job-result 핸들러 (인자 파싱 전에 처리) ──
+if [[ "${1:-}" == "--job-status" ]]; then
+  job_id="${2:?job_id 필수}"
+  job_dir="$TFX_JOBS_DIR/$job_id"
+  [[ -d "$job_dir" ]] || { echo "error: job not found"; exit 1; }
+
+  if [[ -f "$job_dir/done" ]]; then
+    exit_code=$(cat "$job_dir/exit_code" 2>/dev/null || echo 1)
+    if [[ "$exit_code" -eq 0 ]]; then
+      echo "done"
+    elif [[ "$exit_code" -eq 124 ]]; then
+      echo "timeout"
+    else
+      echo "failed"
+    fi
+  elif [[ -f "$job_dir/pid" ]]; then
+    pid=$(cat "$job_dir/pid")
+    if kill -0 "$pid" 2>/dev/null; then
+      # 진행 상황 힌트
+      local_bytes=$(wc -c < "$job_dir/stdout.log" 2>/dev/null || echo 0)
+      elapsed=$(( $(date +%s) - $(cat "$job_dir/start_time" 2>/dev/null || date +%s) ))
+      echo "running elapsed=${elapsed}s output=${local_bytes}B"
+    else
+      # 프로세스 종료됐는데 done 마커 없음 → 비정상 종료
+      echo "failed"
+    fi
+  else
+    echo "error: invalid job state"
+    exit 1
+  fi
+  exit 0
+fi
+
+if [[ "${1:-}" == "--job-result" ]]; then
+  job_id="${2:?job_id 필수}"
+  job_dir="$TFX_JOBS_DIR/$job_id"
+  [[ -d "$job_dir" ]] || { echo "error: job not found"; exit 1; }
+  [[ -f "$job_dir/done" ]] || { echo "error: job still running"; exit 1; }
+
+  cat "$job_dir/result.log" 2>/dev/null
+  exit_code=$(cat "$job_dir/exit_code" 2>/dev/null || echo 1)
+  exit "$exit_code"
+fi
+
+# ── --job-wait: 내부 폴링으로 완료 대기 (Bash 도구 호출 횟수 최소화) ──
+# 사용법: tfx-route.sh --job-wait <job_id> [max_seconds=540]
+# 출력: 주기적 "waiting elapsed=Ns" + 최종 "done"|"timeout"|"failed"|"still_running"
+if [[ "${1:-}" == "--job-wait" ]]; then
+  job_id="${2:?job_id 필수}"
+  max_wait="${3:-540}"  # 기본 540초 (9분, Bash 도구 600초 제한 이내)
+  poll_interval=15
+  job_dir="$TFX_JOBS_DIR/$job_id"
+  [[ -d "$job_dir" ]] || { echo "error: job not found"; exit 1; }
+
+  elapsed=0
+  while [[ "$elapsed" -lt "$max_wait" ]]; do
+    if [[ -f "$job_dir/done" ]]; then
+      ec=$(cat "$job_dir/exit_code" 2>/dev/null || echo 1)
+      if [[ "$ec" -eq 0 ]]; then echo "done"
+      elif [[ "$ec" -eq 124 ]]; then echo "timeout"
+      else echo "failed (exit=$ec)"
+      fi
+      exit 0
+    fi
+    sleep "$poll_interval"
+    elapsed=$((elapsed + poll_interval))
+    stderr_bytes=$(wc -c < "$job_dir/stderr.log" 2>/dev/null || echo 0)
+    echo "waiting elapsed=${elapsed}s progress=${stderr_bytes}B"
+  done
+
+  # max_wait 도달했지만 아직 실행 중
+  echo "still_running elapsed=${elapsed}s"
+  exit 0
+fi
+
+# ── --async 플래그 감지 ──
+TFX_ASYNC_MODE=0
+if [[ "${1:-}" == "--async" ]]; then
+  TFX_ASYNC_MODE=1
+  shift
+fi
 
 # ── 인자 파싱 ──
 AGENT_TYPE="${1:?에이전트 타입 필수 (executor, debugger, designer 등)}"
@@ -1517,5 +1611,41 @@ EOF
 
   return "$exit_code"
 }
+
+# ── Async 모드: 백그라운드 실행 + 즉시 job_id 반환 ──
+if [[ "$TFX_ASYNC_MODE" -eq 1 ]]; then
+  mkdir -p "$TFX_JOBS_DIR"
+  JOB_ID="$TIMESTAMP-$$-${RANDOM}"
+  JOB_DIR="$TFX_JOBS_DIR/$JOB_ID"
+  mkdir -p "$JOB_DIR"
+  echo "$AGENT_TYPE" > "$JOB_DIR/agent_type"
+  date +%s > "$JOB_DIR/start_time"
+
+  # 백그라운드 서브쉘: main 실행 → 결과 저장
+  (
+    set +e  # main 내부 에러가 exit_code 기록 전에 서브쉘을 죽이는 것 방지
+    exec > "$JOB_DIR/result.log" 2>"$JOB_DIR/stderr.log"
+    main
+    echo $? > "$JOB_DIR/exit_code"
+    touch "$JOB_DIR/done"
+  ) &
+  bg_pid=$!
+  echo "$bg_pid" > "$JOB_DIR/pid"
+
+  # 종료 감지 데몬 (main이 signal/crash로 죽어도 done 마커 생성)
+  (
+    wait "$bg_pid" 2>/dev/null
+    ec=$?
+    if [[ ! -f "$JOB_DIR/done" ]]; then
+      echo "$ec" > "$JOB_DIR/exit_code"
+      touch "$JOB_DIR/done"
+    fi
+  ) &
+  disown
+
+  # 즉시 리턴: 1초 이내에 Claude Code Bash 도구 완료
+  echo "$JOB_ID"
+  exit 0
+fi
 
 main
