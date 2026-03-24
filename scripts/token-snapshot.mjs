@@ -12,6 +12,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 
 const HOME = homedir();
 const STATE_DIR = join(HOME, ".omc", "state", "cx-auto-tokens");
@@ -519,7 +520,18 @@ function generateReport(sessionId) {
   return reportData;
 }
 
-// ── CLI 핸들러 ──
+// ── Named exports (파이프라인 벤치마크 훅용) ──
+export { takeSnapshot, computeDiff, estimateSavings, formatTokenCount, formatCost, DIFFS_DIR, STATE_DIR };
+
+// ── CLI 핸들러 (직접 실행 시에만) ──
+const __filename = fileURLToPath(import.meta.url);
+const isDirectRun = process.argv[1] && join(dirname(process.argv[1])) === dirname(__filename)
+  && process.argv[1].endsWith("token-snapshot.mjs");
+
+if (!isDirectRun) {
+  // imported as module — skip CLI
+} else {
+
 const [,, command, ...args] = process.argv;
 
 switch (command) {
@@ -559,3 +571,5 @@ switch (command) {
   node token-snapshot.mjs report <session-id>  종합 보고서 생성
     (session-id 대신 "all"로 전체 보고서)`);
 }
+
+} // end isDirectRun guard

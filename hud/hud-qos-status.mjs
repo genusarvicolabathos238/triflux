@@ -1410,6 +1410,17 @@ function scanGeminiSessionTokens() {
 // ============================================================================
 // 라인 렌더러
 // ============================================================================
+// 최근 벤치마크 diff 파일 읽기 (cx-auto-tokens/diffs/ 에서 최신 1개)
+function readLatestBenchmarkDiff() {
+  const diffsDir = join(homedir(), ".omc", "state", "cx-auto-tokens", "diffs");
+  if (!existsSync(diffsDir)) return null;
+  try {
+    const files = readdirSync(diffsDir).filter(f => f.endsWith(".json")).sort().reverse();
+    if (files.length === 0) return null;
+    return readJson(join(diffsDir, files[0]), null);
+  } catch { return null; }
+}
+
 // 토큰 절약액 누적치 읽기 (tfx-auto token tracker)
 function readTokenSavings() {
   const savingsPath = join(homedir(), ".omc", "state", "tfx-auto-tokens", "savings-total.json");
@@ -1427,6 +1438,29 @@ function formatSavings(dollars) {
   if (dollars >= 100) return `$${Math.round(dollars)}`;
   if (dollars >= 10) return `$${dollars.toFixed(1)}`;
   return `$${dollars.toFixed(2)}`;
+}
+
+/**
+ * 파이프라인 벤치마크 diff 결과를 HUD 요약 문자열로 포맷
+ * @param {object} diff - computeDiff() 반환 결과
+ * @returns {string} 토큰 소비 요약 (input/output, 비용, 절감률)
+ */
+function formatTokenSummary(diff) {
+  if (!diff?.delta?.total || !diff?.savings) return "";
+  const t = diff.delta.total;
+  const s = diff.savings;
+
+  const inputStr = formatTokenCount(t.input);
+  const outputStr = formatTokenCount(t.output);
+  const actualStr = formatSavings(s.actualCost);
+  const claudeStr = formatSavings(s.claudeCost);
+  const savedPct = s.claudeCost > 0
+    ? Math.round((s.saved / s.claudeCost) * 100)
+    : 0;
+
+  return `${dim("tok:")}${inputStr}${dim("in")} ${outputStr}${dim("out")} ` +
+    `${dim("cost:")}${actualStr} ` +
+    `${dim("sv:")}${green(formatSavings(s.saved))}${dim("(")}${savedPct}%${dim(")")}`;
 }
 
 // sv 퍼센트 포맷 (1000+ → k 표기, 5자 고정폭)
@@ -1799,6 +1833,15 @@ async function main() {
   // tfx-multi 활성 시 팀 상태 행 추가 (v2.2)
   const teamRow = getTeamRow();
   if (teamRow) rows.push(teamRow);
+
+  // 최근 벤치마크 diff → 토큰 요약 행 추가
+  const latestDiff = readLatestBenchmarkDiff();
+  if (latestDiff) {
+    const summary = formatTokenSummary(latestDiff);
+    if (summary) {
+      rows.push({ prefix: `${dim("$")}:`, left: summary, right: "" });
+    }
+  }
 
   // 비활성 프로바이더 dim 처리: 데이터 없으면 전체 줄 dim
   const codexActive = codexBuckets != null;
