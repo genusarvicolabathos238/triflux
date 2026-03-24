@@ -6,7 +6,7 @@
 import { join } from "node:path";
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import {
   createPsmuxSession,
   killPsmuxSession,
@@ -35,7 +35,7 @@ export function buildHeadlessCommand(cli, prompt, resultFile) {
     case "codex":
       return `codex exec '${escaped}' -o '${resultFile}' --color never`;
     case "gemini":
-      return `gemini -p '${escaped}' -o text > '${resultFile}' 2>$null`;
+      return `gemini -p '${escaped}' -o text > '${resultFile}' 2>'${resultFile}.err'`;
     case "claude":
       return `claude -p '${escaped}' --output-format text > '${resultFile}' 2>&1`;
     default:
@@ -67,6 +67,7 @@ function readResult(resultFile, paneId) {
  * @param {string} [opts.layout='2x2'] — pane 레이아웃
  * @param {(event: object) => void} [opts.onProgress] — 진행 콜백
  * @param {number} [opts.progressIntervalSec=0] — N초마다 progress 이벤트 발화 (0=비활성)
+ * @param {boolean} [opts.progressive=false] — true면 pane을 하나씩 split-window로 추가 (실시간 스플릿)
  * @returns {{ sessionName: string, results: Array<{cli: string, paneName: string, matched: boolean, exitCode: number|null, output: string, sessionDead?: boolean}> }}
  */
 export async function runHeadless(sessionName, assignments, opts = {}) {
@@ -75,31 +76,70 @@ export async function runHeadless(sessionName, assignments, opts = {}) {
     layout = "2x2",
     onProgress,
     progressIntervalSec = 0,
+    progressive = false,
   } = opts;
 
   mkdirSync(RESULT_DIR, { recursive: true });
-  const paneCount = assignments.length + 1; // +1 for lead pane (unused but reserved)
-  const session = createPsmuxSession(sessionName, { layout, paneCount });
 
-  if (onProgress) onProgress({ type: "session_created", sessionName, panes: session.panes });
+  let dispatches;
 
-  // 각 워커 pane에 헤드리스 명령 dispatch + pane 타이틀 설정
-  const dispatches = assignments.map((assignment, i) => {
-    const paneName = `worker-${i + 1}`;
-    const resultFile = join(RESULT_DIR, `${sessionName}-${paneName}.txt`).replace(/\\/g, "/");
-    const cmd = buildHeadlessCommand(assignment.cli, assignment.prompt, resultFile);
-    const dispatch = dispatchCommand(sessionName, paneName, cmd);
+  if (progressive) {
+    // ─── 실시간 스플릿 모드: lead pane만 생성 후, 워커를 하나씩 추가 ───
+    const session = createPsmuxSession(sessionName, { layout, paneCount: 1 });
+    if (onProgress) onProgress({ type: "session_created", sessionName, panes: session.panes });
 
-    // pane 타이틀을 "codex (reviewer)" 형태로 설정 — 시각적 구분
-    const paneTitle = assignment.role
-      ? `${assignment.cli} (${assignment.role})`
-      : `${assignment.cli}-${i + 1}`;
-    try { psmuxExec(["select-pane", "-t", dispatch.paneId, "-T", paneTitle]); } catch { /* 무시 */ }
+    dispatches = assignments.map((assignment, i) => {
+      const paneName = `worker-${i + 1}`;
+      const paneTitle = assignment.role
+        ? `${assignment.cli} (${assignment.role})`
+        : `${assignment.cli}-${i + 1}`;
 
-    if (onProgress) onProgress({ type: "dispatched", paneName, cli: assignment.cli });
+      // split-window로 새 pane 추가 — paneId 직접 획득
+      const newPaneId = psmuxExec([
+        "split-window", "-t", sessionName, "-P", "-F",
+        "#{session_name}:#{window_index}.#{pane_index}",
+      ]);
 
-    return { ...dispatch, paneName, resultFile, cli: assignment.cli, role: assignment.role };
-  });
+      // 타이틀 설정
+      try { psmuxExec(["select-pane", "-t", newPaneId, "-T", paneTitle]); } catch { /* 무시 */ }
+
+      if (onProgress) onProgress({ type: "worker_added", paneName, cli: assignment.cli, paneTitle });
+
+      // 캡처 시작 + 명령 dispatch (paneId 직접 사용 — resolvePane race 회피)
+      const resultFile = join(RESULT_DIR, `${sessionName}-${paneName}.txt`).replace(/\\/g, "/");
+      const cmd = buildHeadlessCommand(assignment.cli, assignment.prompt, resultFile);
+      startCapture(sessionName, newPaneId);
+      const dispatch = dispatchCommand(sessionName, newPaneId, cmd);
+
+      if (onProgress) onProgress({ type: "dispatched", paneName, cli: assignment.cli });
+
+      return { ...dispatch, paneId: newPaneId, paneName, resultFile, cli: assignment.cli, role: assignment.role };
+    });
+
+    // 모든 split 완료 후 레이아웃 한 번만 정렬 (깜빡임 방지)
+    try { psmuxExec(["select-layout", "-t", sessionName, "tiled"]); } catch { /* 무시 */ }
+
+  } else {
+    // ─── 기존 모드: 모든 pane을 한 번에 생성 ───
+    const paneCount = assignments.length + 1;
+    const session = createPsmuxSession(sessionName, { layout, paneCount });
+    if (onProgress) onProgress({ type: "session_created", sessionName, panes: session.panes });
+
+    dispatches = assignments.map((assignment, i) => {
+      const paneName = `worker-${i + 1}`;
+      const resultFile = join(RESULT_DIR, `${sessionName}-${paneName}.txt`).replace(/\\/g, "/");
+      const cmd = buildHeadlessCommand(assignment.cli, assignment.prompt, resultFile);
+      const dispatch = dispatchCommand(sessionName, paneName, cmd);
+
+      // P1 fix: 비-progressive에서는 pane 리네임 금지 — 캡처 로그 경로가 타이틀 기반이므로
+      // 리네임하면 waitForCompletion이 "codex (role).log"를 찾지만 실제는 "worker-N.log"로 불일치
+      // progressive 모드에서는 split-window 시 새 pane에 바로 타이틀이 설정되므로 문제없음
+
+      if (onProgress) onProgress({ type: "dispatched", paneName, cli: assignment.cli });
+
+      return { ...dispatch, paneName, resultFile, cli: assignment.cli, role: assignment.role };
+    });
+  }
 
   // 병렬 대기 (Promise.all — 모든 pane 동시 폴링, 총 시간 = max(개별 시간))
   const results = await Promise.all(dispatches.map(async (d) => {
@@ -142,6 +182,7 @@ export async function runHeadless(sessionName, assignments, opts = {}) {
     return {
       cli: d.cli,
       paneName: d.paneName,
+      paneId: d.paneId,
       role: d.role,
       matched: completion.matched,
       exitCode: completion.exitCode,
@@ -196,13 +237,12 @@ export function autoAttachTerminal(sessionName, opts = {}) {
   }
 
   try {
-    // wt.exe new-tab: 새 탭에서 psmux attach 실행
-    execSync(`wt.exe -w 0 nt psmux attach -t ${sessionName}`, { stdio: "ignore" });
+    // Fix P2: argv 스타일 — shell injection 방지
+    execFileSync("wt.exe", ["-w", "0", "nt", "psmux", "attach", "-t", sessionName], { stdio: "ignore" });
     return true;
   } catch {
-    // fallback: 새 창으로 시도
     try {
-      execSync(`start wt.exe psmux attach -t ${sessionName}`, { stdio: "ignore", shell: true });
+      execFileSync("wt.exe", ["psmux", "attach", "-t", sessionName], { stdio: "ignore" });
       return true;
     } catch {
       return false;
@@ -280,11 +320,23 @@ export async function runHeadlessInteractive(sessionName, assignments, opts = {}
   const { results } = await runHeadless(sessionName, assignments, runOpts);
 
   // Phase 2: 세션을 유지하고 interactive handle 반환
-  const dispatches = assignments.map((a, i) => ({
-    paneName: `worker-${i + 1}`,
-    cli: a.cli,
-    role: a.role,
+  // Fix P2: paneId를 dispatches에 포함 (snapshots에서 필요)
+  const dispatches = results.map((r, i) => ({
+    paneName: r.paneName,
+    paneId: r.paneId || "",
+    cli: r.cli,
+    role: r.role,
   }));
+
+  // Fix P2: maxIdleSec 리셋을 위한 타이머 관리
+  let idleTimer = null;
+  function resetIdleTimer() {
+    if (idleTimer) clearTimeout(idleTimer);
+    if (maxIdleSec > 0) {
+      idleTimer = setTimeout(() => handle.kill(), maxIdleSec * 1000);
+      if (idleTimer.unref) idleTimer.unref();
+    }
+  }
 
   const handle = {
     sessionName,
@@ -295,8 +347,8 @@ export async function runHeadlessInteractive(sessionName, assignments, opts = {}
     /** 특정 pane에 후속 명령 dispatch (캡처 자동 재시작) */
     dispatch(paneName, command) {
       if (this._killed) throw new Error("세션이 이미 종료되었습니다.");
-      // 후속 dispatch 시 캡처 로그가 없을 수 있음 (pane title 변경 등)
       try { startCapture(sessionName, paneName); } catch { /* 이미 활성 — 무시 */ }
+      resetIdleTimer();
       return dispatchCommand(sessionName, paneName, command);
     },
 
@@ -304,11 +356,8 @@ export async function runHeadlessInteractive(sessionName, assignments, opts = {}
     capture(paneName, lines = 30) {
       if (this._killed) return "";
       try {
-        return capturePsmuxPane(
-          // psmux는 세션:pane 형태로 resolve
-          `${sessionName}:${paneName}`,
-          lines,
-        );
+        // Fix P2: paneName으로 resolvePane을 경유하여 정확한 paneId 획득
+        return capturePsmuxPane(paneName, lines);
       } catch {
         return "(캡처 실패)";
       }
@@ -323,6 +372,7 @@ export async function runHeadlessInteractive(sessionName, assignments, opts = {}
     /** 특정 pane에서 완료 대기 */
     async waitFor(paneName, token, timeoutSec = 300, waitOpts = {}) {
       if (this._killed) return { matched: false, sessionDead: true };
+      resetIdleTimer();
       return waitForCompletion(sessionName, paneName, token, timeoutSec, waitOpts);
     },
 
