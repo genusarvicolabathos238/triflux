@@ -81,13 +81,18 @@ export async function runHeadless(sessionName, assignments, opts = {}) {
 
   mkdirSync(RESULT_DIR, { recursive: true });
 
+  // onProgress 예외를 삼켜 실행 흐름 보호 (onPoll과 동일 패턴)
+  const safeProgress = onProgress
+    ? (event) => { try { onProgress(event); } catch { /* 콜백 예외 삼킴 */ } }
+    : null;
+
   let dispatches;
 
   if (progressive) {
     // ─── 실시간 스플릿 모드: lead pane만 생성 후, 워커를 하나씩 추가 ───
     const session = createPsmuxSession(sessionName, { layout, paneCount: 1 });
     applyTrifluxTheme(sessionName);
-    if (onProgress) onProgress({ type: "session_created", sessionName, panes: session.panes });
+    if (safeProgress) safeProgress({ type: "session_created", sessionName, panes: session.panes });
 
     dispatches = assignments.map((assignment, i) => {
       const paneName = `worker-${i + 1}`;
@@ -104,7 +109,7 @@ export async function runHeadless(sessionName, assignments, opts = {}) {
       // 타이틀 설정
       try { psmuxExec(["select-pane", "-t", newPaneId, "-T", paneTitle]); } catch { /* 무시 */ }
 
-      if (onProgress) onProgress({ type: "worker_added", paneName, cli: assignment.cli, paneTitle });
+      if (safeProgress) safeProgress({ type: "worker_added", paneName, cli: assignment.cli, paneTitle });
 
       // 캡처 시작 + 명령 dispatch (paneId 직접 사용 — resolvePane race 회피)
       const resultFile = join(RESULT_DIR, `${sessionName}-${paneName}.txt`).replace(/\\/g, "/");
@@ -112,7 +117,7 @@ export async function runHeadless(sessionName, assignments, opts = {}) {
       startCapture(sessionName, newPaneId);
       const dispatch = dispatchCommand(sessionName, newPaneId, cmd);
 
-      if (onProgress) onProgress({ type: "dispatched", paneName, cli: assignment.cli });
+      if (safeProgress) safeProgress({ type: "dispatched", paneName, cli: assignment.cli });
 
       return { ...dispatch, paneId: newPaneId, paneName, resultFile, cli: assignment.cli, role: assignment.role };
     });
@@ -125,7 +130,7 @@ export async function runHeadless(sessionName, assignments, opts = {}) {
     const paneCount = assignments.length + 1;
     const session = createPsmuxSession(sessionName, { layout, paneCount });
     applyTrifluxTheme(sessionName);
-    if (onProgress) onProgress({ type: "session_created", sessionName, panes: session.panes });
+    if (safeProgress) safeProgress({ type: "session_created", sessionName, panes: session.panes });
 
     dispatches = assignments.map((assignment, i) => {
       const paneName = `worker-${i + 1}`;
@@ -137,7 +142,7 @@ export async function runHeadless(sessionName, assignments, opts = {}) {
       // 리네임하면 waitForCompletion이 "codex (role).log"를 찾지만 실제는 "worker-N.log"로 불일치
       // progressive 모드에서는 split-window 시 새 pane에 바로 타이틀이 설정되므로 문제없음
 
-      if (onProgress) onProgress({ type: "dispatched", paneName, cli: assignment.cli });
+      if (safeProgress) safeProgress({ type: "dispatched", paneName, cli: assignment.cli });
 
       return { ...dispatch, paneName, resultFile, cli: assignment.cli, role: assignment.role };
     });
@@ -147,14 +152,14 @@ export async function runHeadless(sessionName, assignments, opts = {}) {
   const results = await Promise.all(dispatches.map(async (d) => {
     // onPoll → onProgress 변환 (throttle by progressIntervalSec)
     const pollOpts = {};
-    if (onProgress && progressIntervalSec > 0) {
+    if (safeProgress && progressIntervalSec > 0) {
       let lastProgressAt = 0;
       const intervalMs = progressIntervalSec * 1000;
       pollOpts.onPoll = ({ content }) => {
         const now = Date.now();
         if (now - lastProgressAt >= intervalMs) {
           lastProgressAt = now;
-          onProgress({
+          safeProgress({
             type: "progress",
             paneName: d.paneName,
             cli: d.cli,
@@ -170,8 +175,8 @@ export async function runHeadless(sessionName, assignments, opts = {}) {
       ? readResult(d.resultFile, d.paneId)
       : "";
 
-    if (onProgress) {
-      onProgress({
+    if (safeProgress) {
+      safeProgress({
         type: "completed",
         paneName: d.paneName,
         cli: d.cli,
