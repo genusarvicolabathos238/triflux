@@ -77,6 +77,7 @@ export function buildSlimWrapperAgent(cli, opts = {}) {
  *   usedRoute: boolean,
  *   abnormal: boolean,
  *   reason: string|null,
+ *   slopDetected: boolean,
  * }}
  */
 export function verifySlimWrapperRouteExecution(input = {}) {
@@ -96,6 +97,7 @@ export function verifySlimWrapperRouteExecution(input = {}) {
     : sawDirectToolBypass
       ? "direct_tool_bypass_detected"
       : "missing_tfx_route_evidence";
+  const slopDetected = detectSlop(stdoutText);
 
   return {
     expectedRouteInvocation,
@@ -106,6 +108,7 @@ export function verifySlimWrapperRouteExecution(input = {}) {
     usedRoute,
     abnormal,
     reason,
+    slopDetected,
   };
 }
 
@@ -440,6 +443,199 @@ export function formatPollReport(pollResult = {}) {
   return detail
     ? `${completed.length}/${total} 완료 (${detail})`
     : `${completed.length}/${total} 완료`;
+}
+
+// ── Anti-slop 필터링 ────────────────────────────────────────────
+
+/**
+ * 문자열을 정규화: 소문자 변환 + 연속 공백을 단일 공백으로 + trim
+ * @param {string} s
+ * @returns {string}
+ */
+function normalizeText(s) {
+  return String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/**
+ * 두 문자열의 단어 집합 Jaccard 유사도를 계산한다.
+ * @param {string} a — 정규화된 문자열
+ * @param {string} b — 정규화된 문자열
+ * @returns {number} 0.0–1.0
+ */
+function jaccardSimilarity(a, b) {
+  const setA = new Set(a.split(" ").filter(Boolean));
+  const setB = new Set(b.split(" ").filter(Boolean));
+  if (setA.size === 0 && setB.size === 0) return 1.0;
+  if (setA.size === 0 || setB.size === 0) return 0.0;
+  let intersection = 0;
+  for (const w of setA) {
+    if (setB.has(w)) intersection++;
+  }
+  return intersection / (setA.size + setB.size - intersection);
+}
+
+/**
+ * findings 배열에서 중복을 제거한다.
+ * 정규화 후 description의 Jaccard 유사도 >= 0.8이면 중복으로 판정.
+ * 동일 file+line인 경우도 중복 후보로 취급.
+ *
+ * @param {Array<{description:string, file?:string, line?:number, severity?:string}>} findings
+ * @returns {Array<{description:string, file?:string, line?:number, severity?:string, occurrences:number}>}
+ */
+export function deduplicateFindings(findings) {
+  if (!Array.isArray(findings) || findings.length === 0) return [];
+
+  const groups = []; // [{canonical, items:[]}]
+
+  for (const f of findings) {
+    const norm = normalizeText(f.description);
+    let merged = false;
+    for (const g of groups) {
+      if (jaccardSimilarity(norm, g.norm) >= 0.8) {
+        g.items.push(f);
+        merged = true;
+        break;
+      }
+    }
+    if (!merged) {
+      groups.push({ norm, canonical: f, items: [f] });
+    }
+  }
+
+  return groups.map((g) => ({
+    description: g.canonical.description,
+    ...(g.canonical.file != null ? { file: g.canonical.file } : {}),
+    ...(g.canonical.line != null ? { line: g.canonical.line } : {}),
+    ...(g.canonical.severity != null ? { severity: g.canonical.severity } : {}),
+    occurrences: g.items.length,
+  }));
+}
+
+/**
+ * scout 보고서 원문을 핵심 발견 사항만 추출하여 압축한다.
+ * 파일:라인 + 한줄 요약 형태로 변환하며 최대 ~500토큰(2000자) 이하로 제한.
+ *
+ * @param {string} rawReport — 자유형 텍스트
+ * @returns {{findings: Array<{file:string, line:string, summary:string}>, summary:string, tokenEstimate:number}}
+ */
+export function compressScoutReport(rawReport) {
+  const MAX_CHARS = 2000;
+  const text = String(rawReport || "");
+
+  // 파일:라인 패턴 추출 (path/to/file.ext:123 형태 + 뒤따르는 설명)
+  const fileLineRe = /([a-zA-Z0-9_./-]+\.[a-zA-Z]{1,10}):(\d+)\s*[:\-–—]?\s*(.+)/g;
+  const findings = [];
+  let match;
+  while ((match = fileLineRe.exec(text)) !== null) {
+    findings.push({
+      file: match[1],
+      line: match[2],
+      summary: match[3].trim().slice(0, 120),
+    });
+  }
+
+  // 문장 단위로 핵심 요약 구성
+  const sentences = text
+    .split(/[.\n]/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 10);
+  let summary = sentences.slice(0, 5).join(". ");
+
+  // 토큰 추정: ~4자 = 1토큰
+  const estimateTokens = (s) => Math.ceil(s.length / 4);
+
+  // findings를 먼저 계산하고, 남은 공간에 맞춰 summary를 자른다
+  const findingsJson = JSON.stringify(findings);
+  const findingsBudget = Math.min(findingsJson.length, Math.floor(MAX_CHARS * 0.3));
+
+  let trimmedFindings = findings;
+  if (findingsJson.length > findingsBudget && findings.length > 0) {
+    trimmedFindings = [];
+    let used = 2; // []
+    for (const f of findings) {
+      const entryLen = JSON.stringify(f).length + 1;
+      if (used + entryLen > findingsBudget) break;
+      trimmedFindings.push(f);
+      used += entryLen;
+    }
+  }
+
+  const summaryBudget = MAX_CHARS - JSON.stringify(trimmedFindings).length;
+  if (summary.length > summaryBudget) {
+    summary = summary.slice(0, Math.max(0, summaryBudget - 3)) + "...";
+  }
+
+  return {
+    findings: trimmedFindings,
+    summary,
+    tokenEstimate: estimateTokens(summary + JSON.stringify(trimmedFindings)),
+  };
+}
+
+/**
+ * 여러 scout 보고서의 발견 사항을 종합하여 가중 신뢰도를 계산한다.
+ * 동일 발견이 여러 scout에서 보고되면 신뢰도가 높다.
+ *
+ * @param {Array<{agentName:string, findings:Array<{description:string}>}>} scoutReports
+ * @returns {Array<{description:string, confidence:number, reporters:string[]}>}
+ */
+export function weightedConsensus(scoutReports) {
+  if (!Array.isArray(scoutReports) || scoutReports.length === 0) return [];
+
+  const totalScouts = scoutReports.length;
+  // {normDesc -> {description, reporters: Set}}
+  const consensusMap = new Map();
+
+  for (const report of scoutReports) {
+    const agent = String(report.agentName || "unknown");
+    const findings = Array.isArray(report.findings) ? report.findings : [];
+    for (const f of findings) {
+      const norm = normalizeText(f.description);
+      let matched = false;
+      for (const [key, entry] of consensusMap) {
+        if (jaccardSimilarity(norm, key) >= 0.8) {
+          entry.reporters.add(agent);
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        consensusMap.set(norm, {
+          description: f.description,
+          reporters: new Set([agent]),
+        });
+      }
+    }
+  }
+
+  return Array.from(consensusMap.values()).map((entry) => ({
+    description: entry.description,
+    confidence: Math.round((entry.reporters.size / totalScouts) * 100) / 100,
+    reporters: Array.from(entry.reporters),
+  }));
+}
+
+// ── Slop detection helper ───────────────────────────────────────
+
+const SLOP_REPEAT_THRESHOLD = 3;
+
+/**
+ * 텍스트에서 동일 패턴이 SLOP_REPEAT_THRESHOLD회 이상 반복되는지 판정한다.
+ * 줄 단위로 정규화하여 비교.
+ * @param {string} text
+ * @returns {boolean}
+ */
+function detectSlop(text) {
+  const lines = String(text || "")
+    .split("\n")
+    .map(normalizeText)
+    .filter((l) => l.length > 15); // 너무 짧은 줄은 무시
+  const counts = new Map();
+  for (const line of lines) {
+    counts.set(line, (counts.get(line) || 0) + 1);
+    if (counts.get(line) >= SLOP_REPEAT_THRESHOLD) return true;
+  }
+  return false;
 }
 
 /**
