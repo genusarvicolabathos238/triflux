@@ -150,28 +150,32 @@ Plan/PRD/Approval은 tfx-auto에서 실행, 그 후 tfx-multi Phase 3로 전환.
 ## 멀티 태스크 라우팅 (트리아지 후)
 
 > **트리아지 결과에 따라 실행 경로 결정.**
+> v6.0.0부터 CLI 워커는 **Lead-Direct Headless** (psmux)가 기본. Agent 래퍼 불필요.
 
-| 조건 | 실행 경로 | 이유 |
+| 조건 | 실행 경로 | 엔진 |
 |------|----------|------|
-| 1개 + quick | tfx-auto 직접 실행 (fire-and-forget) | 팀 오버헤드 불필요 |
-| 1개 + thorough | tfx-auto 직접 실행 + verify/fix loop | plan→exec→verify 단일 경로 |
-| 2개+ + quick | tfx-multi Phase 3 (TeamCreate 직행) | Shift+Down, 상태 추적 |
-| 2개+ + thorough | Plan/PRD/Approval 후 → tfx-multi Phase 3 + verify/fix | 전체 파이프라인 |
+| 1개 + quick | tfx-auto 직접 실행 (fire-and-forget) | tfx-route.sh |
+| 1개 + thorough | tfx-auto 직접 실행 + verify/fix loop | tfx-route.sh |
+| 2개+ + quick | **headless 직접 실행** (WT 자동 팝업) | headless.mjs |
+| 2개+ + thorough | Plan/PRD/Approval 후 → headless + verify/fix | headless.mjs |
+| psmux 미설치 fallback | Native Teams (Agent slim wrapper) | native.mjs |
 
-**전환 방법:** 트리아지 완료 후 서브태스크 배열 + thorough 플래그를 tfx-multi Phase 3에 전달.
-tfx-multi의 Phase 2(트리아지)는 건너뛰고, thorough 시 Phase 2.5-2.6도 건너뛴다 (auto에서 이미 수행).
+**전환 방법:** 트리아지 완료 후 서브태스크 배열을 headless.runHeadlessInteractive()에 전달.
+Windows Terminal에 psmux 세션이 자동 팝업되어 사용자가 실시간으로 CLI 출력 확인.
 
 ```
 thorough = args에 -t 또는 --thorough 포함
 
 if subtasks.length >= 2:
-  if thorough:
-    → Pipeline init → Plan → PRD → Approval (tfx-auto에서 수행)
-    → tfx-multi Phase 3 실행 ({ subtasks, thorough: true })
-    → Phase 3.5 verify → Phase 3.6 fix loop → Phase 5 정리
+  if psmux 설치됨:
+    → headless.runHeadlessInteractive(assignments, {
+        autoAttach: true,     // WT 자동 팝업
+        progressive: true,    // 실시간 스플릿
+        progressIntervalSec: 10,
+      })
+    → if thorough: verify → fix loop
   else:
-    → tfx-multi Phase 3 실행 ({ subtasks, thorough: false })
-    → Phase 4 결과 수집 → Phase 5 정리
+    → fallback: tfx-multi Phase 3 Native Teams (Agent slim wrapper)
 else:
   if thorough:
     → Pipeline init → Plan → PRD → Approval → 직접 실행 → Verify → Fix loop
