@@ -4,7 +4,9 @@ import { readFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 
-import { createPipeline } from '../../hub/pipeline/index.mjs';
+import { createTools } from '../../hub/tools.mjs';
+import { createPipeline, ensurePipelineTable } from '../../hub/pipeline/index.mjs';
+import { initPipelineState } from '../../hub/pipeline/state.mjs';
 
 // 테스트 전용 임시 디렉토리 (CWD를 오염시키지 않기 위해)
 const TEST_BASE = resolve(import.meta.dirname, '..', '..', '.test-tmp-pipeline');
@@ -74,5 +76,121 @@ describe('pipeline.writePlanFile()', () => {
     assert.equal(basename, 'team___bad_name-plan.md');
     assert.ok(existsSync(planPath));
     assert.equal(readFileSync(planPath, 'utf8'), content);
+  });
+});
+
+describe('pipeline_advance_gated (이슈 2)', () => {
+  let db;
+  let pipelineAdvanceGatedTool;
+  let hitlCalls;
+
+  function parseToolResult(result) {
+    assert.equal(result.content.length, 1);
+    assert.equal(result.content[0].type, 'text');
+    return JSON.parse(result.content[0].text);
+  }
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    ensurePipelineTable(db);
+
+    hitlCalls = [];
+    const hitl = {
+      requestHumanInput(args) {
+        hitlCalls.push(args);
+        return { ok: true, data: { request_id: 'test-req-1' } };
+      },
+    };
+
+    pipelineAdvanceGatedTool = createTools({ db }, {}, hitl, null).find(
+      ({ name }) => name === 'pipeline_advance_gated',
+    );
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('T2-01: canAdvance()가 false면 TRANSITION_BLOCKED 반환', async () => {
+    initPipelineState(db, 'test-team');
+    const pipeline = createPipeline(db, 'test-team');
+
+    assert.equal(pipeline.canAdvance('verify'), false);
+
+    const result = await pipelineAdvanceGatedTool.handler({
+      team_name: 'test-team',
+      phase: 'verify',
+    });
+    const body = parseToolResult(result);
+
+    assert.deepEqual(body, {
+      ok: false,
+      error: {
+        code: 'TRANSITION_BLOCKED',
+        message: '전이 불가: plan → verify',
+      },
+    });
+    assert.equal(hitlCalls.length, 0);
+  });
+
+  it('T2-02: canAdvance()가 true면 전이 가능', () => {
+    initPipelineState(db, 'test-team');
+    const pipeline = createPipeline(db, 'test-team');
+
+    assert.equal(pipeline.canAdvance('prd'), true);
+  });
+
+  it('T2-03: pipeline_advance_gated handler가 pending: true를 반환', async () => {
+    const result = await pipelineAdvanceGatedTool.handler({
+      team_name: 'test-team',
+      phase: 'prd',
+    });
+    const body = parseToolResult(result);
+
+    assert.equal(body.ok, true);
+    assert.equal(body.data.pending, true);
+    assert.equal(body.data.request_id, 'test-req-1');
+    assert.equal(body.data.team_name, 'test-team');
+    assert.equal(body.data.target_phase, 'prd');
+    assert.equal(body.data.current_phase, 'plan');
+    assert.equal(hitlCalls.length, 1);
+    assert.equal(hitlCalls[0].kind, 'approval');
+  });
+
+  it('T2-04: HITL 요청에 deadline_ms와 default_action이 포함되어야 한다', async () => {
+    const before = Date.now();
+    const result = await pipelineAdvanceGatedTool.handler({
+      team_name: 'test-team',
+      phase: 'prd',
+      prompt: '승인 요청 메시지',
+      deadline_ms: 5000,
+      default_action: 'timeout_abort',
+      requester_agent: 'qa-agent',
+    });
+    const after = Date.now();
+    const body = parseToolResult(result);
+
+    assert.equal(hitlCalls.length, 1);
+    assert.equal(hitlCalls[0].requester_agent, 'qa-agent');
+    assert.equal(hitlCalls[0].kind, 'approval');
+    assert.equal(hitlCalls[0].prompt, '승인 요청 메시지');
+    assert.equal(hitlCalls[0].default_action, 'timeout_abort');
+    assert.ok(hitlCalls[0].deadline_ms >= before + 5000);
+    assert.ok(hitlCalls[0].deadline_ms <= after + 5000);
+    assert.equal(body.data.deadline_ms, hitlCalls[0].deadline_ms);
+    assert.equal(body.data.default_action, 'timeout_abort');
+    assert.match(body.data.message, /5초 후 timeout_abort 자동 실행\./);
+  });
+
+  it('T2-MCP-01: pipeline_advance_gated 도구가 createTools()에 등록되어야 한다', () => {
+    assert.ok(pipelineAdvanceGatedTool);
+    assert.equal(pipelineAdvanceGatedTool.name, 'pipeline_advance_gated');
+  });
+
+  it('T2-MCP-02: 도구 inputSchema에 필수 필드 team_name, phase가 있어야 한다', () => {
+    assert.ok(pipelineAdvanceGatedTool.inputSchema.required.includes('team_name'));
+    assert.ok(pipelineAdvanceGatedTool.inputSchema.required.includes('phase'));
+    assert.ok(pipelineAdvanceGatedTool.inputSchema.properties.team_name);
+    assert.ok(pipelineAdvanceGatedTool.inputSchema.properties.phase);
   });
 });

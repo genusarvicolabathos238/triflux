@@ -246,3 +246,51 @@ describe('hub/team/native.mjs — feedback loop (이슈 8)', () => {
     assert.match(prompt, /async \+ feedback/);
   });
 });
+
+describe('hub/team/native.mjs — scout E2E integration (이슈 4)', () => {
+  it('T4-E2E-01: scout dispatch 프롬프트가 tfx-route.sh scientist 호출을 포함해야 한다', () => {
+    const prompt = buildScoutDispatchPrompt({
+      question: 'DB 마이그레이션 현황 파악',
+      scope: 'db/migrations/',
+      teamName: 'tfx-test',
+      taskId: 'scout-1',
+      agentName: 'codex-scout-1',
+      leadName: 'team-lead',
+    });
+    assert.match(prompt, /tfx-route\.sh/u);
+    assert.match(prompt, /scientist/u);
+    assert.match(prompt, /DB 마이그레이션 현황 파악/u);
+  });
+
+  it('T4-E2E-02: scout 프롬프트가 route verification을 통과해야 한다', () => {
+    const prompt = buildScoutDispatchPrompt({ question: 'API 구조 탐색' });
+    const result = verifySlimWrapperRouteExecution({
+      promptText: prompt,
+      stdoutText: 'analysis result',
+      stderrText: '[tfx-route] role=scientist cli=codex',
+    });
+    assert.equal(result.expectedRouteInvocation, true);
+    assert.equal(result.usedRoute, true);
+    assert.equal(result.abnormal, false);
+  });
+
+  it('T4-E2E-03: scout 프롬프트가 direct tool bypass를 탐지해야 한다', () => {
+    const prompt = buildScoutDispatchPrompt({ question: 'test' });
+    const result = verifySlimWrapperRouteExecution({
+      promptText: prompt,
+      stdoutText: 'Read(file_path="src/main.js")',
+      stderrText: '',
+    });
+    assert.equal(result.sawDirectToolBypass, true);
+    assert.equal(result.abnormal, true);
+  });
+
+  it('T4-E2E-04: scout Agent spec이 올바른 subagent_type을 포함해야 한다', () => {
+    const prompt = buildScoutDispatchPrompt({
+      question: 'test',
+      teamName: 'tfx-scout-test',
+      agentName: 'codex-scout-1',
+    });
+    assert.match(prompt, new RegExp(`subagent_type="${SLIM_WRAPPER_SUBAGENT_TYPE}"`, 'u'));
+  });
+});
