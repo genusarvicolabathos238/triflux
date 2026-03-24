@@ -84,6 +84,191 @@ afterEach(() => {
   }
 });
 
+describe("resolvePane fallback (psmux title 미설정 우회)", () => {
+  function mockWithPsmuxDefaultTitles({ captureOutputs = [] } = {}) {
+    const calls = [];
+    let captureIndex = 0;
+
+    const tracker = mock.method(childProcess, "execFileSync", (file, args) => {
+      const argv = Array.isArray(args) ? [...args] : [];
+      calls.push({ file, args: argv });
+
+      switch (argv[0]) {
+        case "-V":
+          return "psmux 3.3.0";
+        case "list-panes":
+          // psmux는 select-pane -T가 동작하지 않아 기본 "pane %N" 타이틀 반환
+          return [
+            "pane %1\ttfx-test:0.0\t0\t",
+            "pane %2\ttfx-test:0.1\t0\t",
+            "pane %3\ttfx-test:0.2\t0\t",
+          ].join("\n");
+        case "pipe-pane":
+          return "";
+        case "capture-pane": {
+          const value = captureOutputs[Math.min(captureIndex, captureOutputs.length - 1)] || "";
+          captureIndex += 1;
+          return value;
+        }
+        case "send-keys":
+          return "";
+        default:
+          throw new Error(`예상하지 못한 execFileSync 호출: ${argv.join(" ")}`);
+      }
+    });
+
+    registerRestore(() => tracker.mock.restore());
+    return { calls };
+  }
+
+  it("'lead'는 pane index 0으로 fallback 매핑된다", async () => {
+    createTempCaptureRoot("psmux-fallback-lead-");
+    mockWithPsmuxDefaultTitles({ captureOutputs: ["snapshot"] });
+    const { startCapture } = await importFreshPsmux();
+
+    const result = startCapture("tfx-test", "lead");
+    assert.equal(result.paneId, "tfx-test:0.0");
+  });
+
+  it("'worker-1'은 pane index 1로 fallback 매핑된다", async () => {
+    createTempCaptureRoot("psmux-fallback-w1-");
+    mockWithPsmuxDefaultTitles({ captureOutputs: ["snapshot"] });
+    const { startCapture } = await importFreshPsmux();
+
+    const result = startCapture("tfx-test", "worker-1");
+    assert.equal(result.paneId, "tfx-test:0.1");
+  });
+
+  it("'worker-2'는 pane index 2로 fallback 매핑된다", async () => {
+    createTempCaptureRoot("psmux-fallback-w2-");
+    mockWithPsmuxDefaultTitles({ captureOutputs: ["snapshot"] });
+    const { startCapture } = await importFreshPsmux();
+
+    const result = startCapture("tfx-test", "worker-2");
+    assert.equal(result.paneId, "tfx-test:0.2");
+  });
+
+  it("pane target 직접 접근은 여전히 동작한다", async () => {
+    createTempCaptureRoot("psmux-fallback-target-");
+    mockWithPsmuxDefaultTitles({ captureOutputs: ["snapshot"] });
+    const { startCapture } = await importFreshPsmux();
+
+    const result = startCapture("tfx-test", "tfx-test:0.1");
+    assert.equal(result.paneId, "tfx-test:0.1");
+  });
+
+  it("범위 초과 이름은 에러를 던진다", async () => {
+    createTempCaptureRoot("psmux-fallback-oob-");
+    mockWithPsmuxDefaultTitles({ captureOutputs: ["snapshot"] });
+    const { startCapture } = await importFreshPsmux();
+
+    assert.throws(
+      () => startCapture("tfx-test", "worker-999"),
+      /Pane을 찾을 수 없습니다/,
+    );
+  });
+
+  it("알 수 없는 이름은 에러를 던진다", async () => {
+    createTempCaptureRoot("psmux-fallback-unknown-");
+    mockWithPsmuxDefaultTitles({ captureOutputs: ["snapshot"] });
+    const { startCapture } = await importFreshPsmux();
+
+    assert.throws(
+      () => startCapture("tfx-test", "unknown-pane"),
+      /Pane을 찾을 수 없습니다/,
+    );
+  });
+
+  it("dispatchCommand도 fallback으로 동작한다", async () => {
+    createTempCaptureRoot("psmux-fallback-dispatch-");
+    mockWithPsmuxDefaultTitles({ captureOutputs: ["snapshot"] });
+    const { dispatchCommand } = await importFreshPsmux();
+
+    const result = dispatchCommand("tfx-test", "worker-1", "Write-Host test");
+    assert.equal(result.paneId, "tfx-test:0.1");
+    assert.ok(result.token.length > 0);
+  });
+
+  // B-edge: worker-0은 거부 (lead 충돌 방지)
+  it("worker-0은 거부된다 (lead와 충돌 방지)", async () => {
+    createTempCaptureRoot("psmux-fallback-w0-");
+    mockWithPsmuxDefaultTitles({ captureOutputs: ["snapshot"] });
+    const { startCapture } = await importFreshPsmux();
+
+    assert.throws(
+      () => startCapture("tfx-test", "worker-0"),
+      /Pane을 찾을 수 없습니다/,
+    );
+  });
+
+  // B-edge: 빈 문자열 거부
+  it("빈 문자열은 거부된다", async () => {
+    createTempCaptureRoot("psmux-fallback-empty-");
+    mockWithPsmuxDefaultTitles({ captureOutputs: ["snapshot"] });
+    const { startCapture } = await importFreshPsmux();
+
+    assert.throws(
+      () => startCapture("tfx-test", ""),
+      /Pane을 찾을 수 없습니다/,
+    );
+  });
+
+  // B-edge: 특수문자/인젝션 안전
+  it("특수문자 입력은 안전하게 거부된다", async () => {
+    createTempCaptureRoot("psmux-fallback-special-");
+    mockWithPsmuxDefaultTitles({ captureOutputs: ["snapshot"] });
+    const { startCapture } = await importFreshPsmux();
+
+    assert.throws(() => startCapture("tfx-test", "worker-1; rm -rf /"), /Pane을 찾을 수 없습니다/);
+    assert.throws(() => startCapture("tfx-test", "$(whoami)"), /Pane을 찾을 수 없습니다/);
+    assert.throws(() => startCapture("tfx-test", "worker-1\ttfx:0.0"), /Pane을 찾을 수 없습니다/);
+  });
+
+  // B-edge: 대소문자 — WORKER-1, Lead, LEAD 모두 동작
+  it("대소문자 무관하게 동작한다 (WORKER-1, Lead, LEAD)", async () => {
+    createTempCaptureRoot("psmux-fallback-case-");
+    mockWithPsmuxDefaultTitles({ captureOutputs: ["snapshot"] });
+    const { startCapture } = await importFreshPsmux();
+
+    assert.equal(startCapture("tfx-test", "WORKER-1").paneId, "tfx-test:0.1");
+    assert.equal(startCapture("tfx-test", "Worker-2").paneId, "tfx-test:0.2");
+    assert.equal(startCapture("tfx-test", "LEAD").paneId, "tfx-test:0.0");
+    assert.equal(startCapture("tfx-test", "Lead").paneId, "tfx-test:0.0");
+  });
+
+  // C-regression: title 직접 매칭이 index fallback보다 우선
+  it("title 직접 매칭이 index fallback보다 우선한다", async () => {
+    createTempCaptureRoot("psmux-fallback-priority-");
+    // title이 실제로 설정된 경우 (tmux 정상 동작)
+    const calls = [];
+    let captureIndex = 0;
+    const tracker = mock.method(childProcess, "execFileSync", (file, args) => {
+      const argv = Array.isArray(args) ? [...args] : [];
+      calls.push({ file, args: argv });
+      switch (argv[0]) {
+        case "-V": return "psmux 3.3.0";
+        case "list-panes":
+          // worker-1 title이 실제 설정된 경우 — index 2에 위치
+          return [
+            "lead\ttfx-test:0.0\t0\t",
+            "other\ttfx-test:0.1\t0\t",
+            "worker-1\ttfx-test:0.2\t0\t",
+          ].join("\n");
+        case "pipe-pane": return "";
+        case "capture-pane": return captureIndex++ < 1 ? "snapshot" : "";
+        case "send-keys": return "";
+        default: throw new Error(`unexpected: ${argv.join(" ")}`);
+      }
+    });
+    registerRestore(() => tracker.mock.restore());
+    const { startCapture } = await importFreshPsmux();
+
+    // title "worker-1"이 index 2에 있으므로, title 매칭 우선 → tfx-test:0.2
+    const result = startCapture("tfx-test", "worker-1");
+    assert.equal(result.paneId, "tfx-test:0.2");
+  });
+});
+
 describe("psmux.mjs steering", () => {
   it("startCapture는 pipe-pane을 설정하고 snapshot 로그를 만든다", async () => {
     createTempCaptureRoot("psmux-start-");

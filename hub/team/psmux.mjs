@@ -248,14 +248,29 @@ function listPaneDetails(sessionName) {
   return parsePaneDetails(output);
 }
 
+function paneTitleToIndex(name) {
+  const lower = String(name).toLowerCase();
+  if (lower === "lead") return 0;
+  const m = /^worker-(\d+)$/.exec(lower);
+  if (!m) return -1;
+  const idx = parseInt(m[1], 10);
+  // worker-0은 유효하지 않음 (lead와 충돌, toPaneTitle은 worker-0을 생성하지 않음)
+  return idx >= 1 ? idx : -1;
+}
+
 function resolvePane(sessionName, paneNameOrTarget) {
   const wanted = String(paneNameOrTarget);
-  const pane = listPaneDetails(sessionName)
-    .find((entry) => entry.title === wanted || entry.paneId === wanted);
-  if (!pane) {
-    throw new Error(`Pane을 찾을 수 없습니다: ${paneNameOrTarget}`);
-  }
-  return pane;
+  const panes = listPaneDetails(sessionName);
+
+  // 1차: title 또는 paneId 직접 매칭
+  const direct = panes.find((entry) => entry.title === wanted || entry.paneId === wanted);
+  if (direct) return direct;
+
+  // 2차: psmux title 미설정 fallback — "lead"→0, "worker-N"→N 인덱스 매칭
+  const idx = paneTitleToIndex(wanted);
+  if (idx >= 0 && idx < panes.length) return panes[idx];
+
+  throw new Error(`Pane을 찾을 수 없습니다: ${paneNameOrTarget}`);
 }
 
 function refreshCaptureSnapshot(sessionName, paneNameOrTarget) {
