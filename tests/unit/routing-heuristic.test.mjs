@@ -122,4 +122,27 @@ describe('resolveRoutingStrategy', () => {
     });
     assert.equal(result.max_complexity, 'L');
   });
+
+  it('R-11: 빈 배열 → quick_single (엣지케이스)', () => {
+    const result = resolveRoutingStrategy({
+      subtasks: [],
+      graph_type: 'INDEPENDENT',
+      thorough: false,
+    });
+    assert.equal(result.strategy, 'quick_single');
+    assert.equal(result.reason, 'empty_subtasks');
+  });
+
+  it('R-12: 순환 의존 → 무한 재귀 없이 반환', () => {
+    const result = resolveRoutingStrategy({
+      subtasks: [
+        { id: '1', agent: 'codex', complexity: 'M', depends_on: ['2'] },
+        { id: '2', agent: 'codex', complexity: 'M', depends_on: ['1'] },
+      ],
+      graph_type: 'DAG',
+      thorough: false,
+    });
+    assert.ok(result.strategy, '전략이 반환되어야 한다');
+    assert.ok(typeof result.dag_width === 'number', 'dag_width가 숫자여야 한다');
+  });
 });

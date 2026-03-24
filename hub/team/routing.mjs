@@ -13,6 +13,10 @@
  */
 export function resolveRoutingStrategy({ subtasks, graph_type, thorough }) {
   const N = subtasks.length;
+  if (N === 0) {
+    return { strategy: 'quick_single', reason: 'empty_subtasks', dag_width: 0, max_complexity: 'S' };
+  }
+
   const dag_width = computeDagWidth(subtasks, graph_type);
   const max_complexity = getMaxComplexity(subtasks);
   const isHighComplexity = ['L', 'XL'].includes(max_complexity);
@@ -92,19 +96,26 @@ function computeDagWidth(subtasks, graph_type) {
   if (graph_type === 'SEQUENTIAL') return 1;
   if (graph_type === 'INDEPENDENT') return subtasks.length;
 
-  // DAG: 레벨별 계산
+  // DAG: 레벨별 계산 (순환 의존 방어)
   const levels = {};
+  const visiting = new Set();
 
   function getLevel(task) {
     if (levels[task.id] !== undefined) return levels[task.id];
+    if (visiting.has(task.id)) {
+      levels[task.id] = 0; // 순환 끊기
+      return 0;
+    }
     if (!task.depends_on || task.depends_on.length === 0) {
       levels[task.id] = 0;
       return 0;
     }
+    visiting.add(task.id);
     const depLevels = task.depends_on.map((depId) => {
       const dep = subtasks.find((s) => s.id === depId);
       return dep ? getLevel(dep) : 0;
     });
+    visiting.delete(task.id);
     levels[task.id] = Math.max(...depLevels) + 1;
     return levels[task.id];
   }
