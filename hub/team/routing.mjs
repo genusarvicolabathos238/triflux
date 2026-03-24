@@ -8,17 +8,20 @@
  *   strategy: "quick_single" | "thorough_single" | "quick_team" | "thorough_team" | "batch_single",
  *   reason: string,
  *   dag_width: number,
- *   max_complexity: string
+ *   max_complexity: string,
+ *   dagContext: { dag_width: number, levels: Record<number, string[]>, edges: Array<{from:string, to:string}>, max_complexity: string, taskResults: Record<string, *> }
  * }}
  */
 export function resolveRoutingStrategy({ subtasks, graph_type, thorough }) {
   const N = subtasks.length;
   if (N === 0) {
-    return { strategy: 'quick_single', reason: 'empty_subtasks', dag_width: 0, max_complexity: 'S' };
+    const dagContext = { dag_width: 0, levels: {}, edges: [], max_complexity: 'S', taskResults: {} };
+    return { strategy: 'quick_single', reason: 'empty_subtasks', dag_width: 0, max_complexity: 'S', dagContext };
   }
 
-  const dag_width = computeDagWidth(subtasks, graph_type);
+  const { width: dag_width, levels, edges } = computeDagInfo(subtasks, graph_type);
   const max_complexity = getMaxComplexity(subtasks);
+  const dagContext = { dag_width, levels, edges, max_complexity, taskResults: {} };
   const isHighComplexity = ['L', 'XL'].includes(max_complexity);
   const allSameAgent = new Set(subtasks.map((s) => s.agent)).size === 1;
   const allSmall = subtasks.every((s) => normalizeComplexity(s.complexity) === 'S');
@@ -31,6 +34,7 @@ export function resolveRoutingStrategy({ subtasks, graph_type, thorough }) {
         reason: 'single_high_complexity',
         dag_width,
         max_complexity,
+        dagContext,
       };
     }
     return {
@@ -38,6 +42,7 @@ export function resolveRoutingStrategy({ subtasks, graph_type, thorough }) {
       reason: 'single_low_complexity',
       dag_width,
       max_complexity,
+      dagContext,
     };
   }
 
@@ -49,6 +54,7 @@ export function resolveRoutingStrategy({ subtasks, graph_type, thorough }) {
         reason: 'sequential_chain',
         dag_width,
         max_complexity,
+        dagContext,
       };
     }
     return {
@@ -56,6 +62,7 @@ export function resolveRoutingStrategy({ subtasks, graph_type, thorough }) {
       reason: 'sequential_chain',
       dag_width,
       max_complexity,
+      dagContext,
     };
   }
 
@@ -66,6 +73,7 @@ export function resolveRoutingStrategy({ subtasks, graph_type, thorough }) {
       reason: 'same_agent_small_batch',
       dag_width,
       max_complexity,
+      dagContext,
     };
   }
 
@@ -76,6 +84,7 @@ export function resolveRoutingStrategy({ subtasks, graph_type, thorough }) {
       reason: 'parallel_high_complexity',
       dag_width,
       max_complexity,
+      dagContext,
     };
   }
   return {
@@ -83,31 +92,43 @@ export function resolveRoutingStrategy({ subtasks, graph_type, thorough }) {
     reason: 'parallel_low_complexity',
     dag_width,
     max_complexity,
+    dagContext,
   };
 }
 
 /**
- * DAG 폭 계산 - 레벨별 최대 병렬 태스크 수
+ * DAG 정보 계산 — 레벨별 태스크 배열, 간선, 최대 폭
  * @param {Array<{id:string, depends_on?:string[]}>} subtasks
  * @param {string} graph_type
- * @returns {number}
+ * @returns {{ width: number, levels: Record<number, string[]>, edges: Array<{from:string, to:string}> }}
  */
-function computeDagWidth(subtasks, graph_type) {
-  if (graph_type === 'SEQUENTIAL') return 1;
-  if (graph_type === 'INDEPENDENT') return subtasks.length;
+function computeDagInfo(subtasks, graph_type) {
+  if (graph_type === 'SEQUENTIAL') {
+    const levels = {};
+    const edges = [];
+    subtasks.forEach((t, i) => {
+      levels[i] = [t.id];
+      if (i > 0) edges.push({ from: subtasks[i - 1].id, to: t.id });
+    });
+    return { width: 1, levels, edges };
+  }
+  if (graph_type === 'INDEPENDENT') {
+    const levels = { 0: subtasks.map((t) => t.id) };
+    return { width: subtasks.length, levels, edges: [] };
+  }
 
   // DAG: 레벨별 계산 (순환 의존 방어)
-  const levels = {};
+  const taskLevels = {};
   const visiting = new Set();
 
   function getLevel(task) {
-    if (levels[task.id] !== undefined) return levels[task.id];
+    if (taskLevels[task.id] !== undefined) return taskLevels[task.id];
     if (visiting.has(task.id)) {
-      levels[task.id] = 0; // 순환 끊기
+      taskLevels[task.id] = 0; // 순환 끊기
       return 0;
     }
     if (!task.depends_on || task.depends_on.length === 0) {
-      levels[task.id] = 0;
+      taskLevels[task.id] = 0;
       return 0;
     }
     visiting.add(task.id);
@@ -116,17 +137,65 @@ function computeDagWidth(subtasks, graph_type) {
       return dep ? getLevel(dep) : 0;
     });
     visiting.delete(task.id);
-    levels[task.id] = Math.max(...depLevels) + 1;
-    return levels[task.id];
+    taskLevels[task.id] = Math.max(...depLevels) + 1;
+    return taskLevels[task.id];
   }
 
   subtasks.forEach(getLevel);
 
-  const levelCounts = {};
-  for (const level of Object.values(levels)) {
-    levelCounts[level] = (levelCounts[level] || 0) + 1;
+  // 레벨별 태스크 그룹핑
+  const levels = {};
+  for (const [id, level] of Object.entries(taskLevels)) {
+    if (!levels[level]) levels[level] = [];
+    levels[level].push(id);
   }
-  return Math.max(...Object.values(levelCounts), 1);
+
+  // 간선 수집
+  const edges = [];
+  for (const task of subtasks) {
+    if (task.depends_on) {
+      for (const depId of task.depends_on) {
+        edges.push({ from: depId, to: task.id });
+      }
+    }
+  }
+
+  const width = Math.max(...Object.values(levels).map((arr) => arr.length), 1);
+  return { width, levels, edges };
+}
+
+/**
+ * 선행 태스크의 결과를 dagContext.edges에서 조회하여 반환
+ * @param {string} taskId - 조회 대상 태스크 ID
+ * @param {{ dagContext?: { edges: Array<{from:string, to:string}>, taskResults: Record<string, *> } }} pipelineState
+ * @returns {Record<string, *>} 선행 태스크 ID → 결과 매핑
+ */
+export function getUpstreamResults(taskId, pipelineState) {
+  const ctx = pipelineState?.dagContext;
+  if (!ctx) return {};
+  const upstreamIds = ctx.edges.filter((e) => e.to === taskId).map((e) => e.from);
+  const results = {};
+  for (const id of upstreamIds) {
+    if (id in (ctx.taskResults || {})) {
+      results[id] = ctx.taskResults[id];
+    }
+  }
+  return results;
+}
+
+/**
+ * 태스크 완료 시 결과를 dagContext에 기록
+ * @param {string} taskId - 완료된 태스크 ID
+ * @param {*} result - 태스크 결과
+ * @param {{ dagContext?: { taskResults: Record<string, *> } }} pipelineState
+ * @returns {boolean} 기록 성공 여부
+ */
+export function updateTaskResult(taskId, result, pipelineState) {
+  const ctx = pipelineState?.dagContext;
+  if (!ctx) return false;
+  if (!ctx.taskResults) ctx.taskResults = {};
+  ctx.taskResults[taskId] = result;
+  return true;
 }
 
 /**

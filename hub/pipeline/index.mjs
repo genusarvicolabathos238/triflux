@@ -4,6 +4,7 @@
 
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 
 import { canTransition, transitionPhase, ralphRestart, TERMINAL } from './transitions.mjs';
 import {
@@ -84,6 +85,26 @@ export function createPipeline(db, teamName, opts = {}) {
     },
 
     /**
+     * DAG 컨텍스트를 파이프라인 상태에 저장
+     * @param {{ dag_width: number, levels: Record<number, string[]>, edges: Array<{from:string, to:string}>, max_complexity: string, taskResults: Record<string, *> }} dagContext
+     */
+    setDagContext(dagContext) {
+      const current = readPipelineState(db, teamName);
+      if (!current) return;
+      const artifacts = { ...(current.artifacts || {}), dagContext };
+      state = updatePipelineState(db, teamName, { artifacts });
+    },
+
+    /**
+     * DAG 컨텍스트 조회 (편의 메서드)
+     * @returns {{ dag_width: number, levels: Record<number, string[]>, edges: Array<{from:string, to:string}>, max_complexity: string, taskResults: Record<string, *> } | null}
+     */
+    getDagContext() {
+      const current = readPipelineState(db, teamName) || state;
+      return current?.artifacts?.dagContext || null;
+    },
+
+    /**
      * artifact 저장 (plan_path, prd_path, verify_report 등)
      * @param {string} key
      * @param {*} value
@@ -134,6 +155,61 @@ export function createPipeline(db, teamName, opts = {}) {
       return removePipelineState(db, teamName);
     },
   };
+}
+
+// ── 토큰 벤치마크 훅 ──
+
+let _tokenSnapshotMod = null;
+
+async function loadTokenSnapshot() {
+  if (_tokenSnapshotMod) return _tokenSnapshotMod;
+  try {
+    _tokenSnapshotMod = await import('../../scripts/token-snapshot.mjs');
+  } catch {
+    _tokenSnapshotMod = null;
+  }
+  return _tokenSnapshotMod;
+}
+
+/**
+ * 파이프라인 시작 시 토큰 스냅샷 캡처
+ * @param {string} label - 스냅샷 라벨 (e.g. teamName + timestamp)
+ * @returns {Promise<{label: string, snapshot: object}|null>}
+ */
+export async function benchmarkStart(label) {
+  const mod = await loadTokenSnapshot();
+  if (!mod?.takeSnapshot) return null;
+  try {
+    const snapshot = mod.takeSnapshot(label);
+    return { label, snapshot };
+  } catch { return null; }
+}
+
+/**
+ * 파이프라인 종료 시 diff 계산 + 결과 저장
+ * @param {string} preLabel - 시작 스냅샷 라벨
+ * @param {string} postLabel - 종료 스냅샷 라벨
+ * @param {object} options - { agent?, cli?, id? }
+ * @returns {Promise<object|null>} diff 결과
+ */
+export async function benchmarkEnd(preLabel, postLabel, options = {}) {
+  const mod = await loadTokenSnapshot();
+  if (!mod?.takeSnapshot || !mod?.computeDiff) return null;
+  try {
+    // 종료 스냅샷 캡처
+    mod.takeSnapshot(postLabel);
+    // diff 계산 (결과는 DIFFS_DIR에 자동 저장됨)
+    const diff = mod.computeDiff(preLabel, postLabel, options);
+
+    // 추가로 타임스탬프 기반 사본 저장
+    const diffsDir = join(homedir(), '.omc', 'state', 'cx-auto-tokens', 'diffs');
+    mkdirSync(diffsDir, { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const outPath = join(diffsDir, `${ts}.json`);
+    writeFileSync(outPath, JSON.stringify(diff, null, 2));
+
+    return diff;
+  } catch { return null; }
 }
 
 export { ensurePipelineTable } from './state.mjs';
