@@ -12,6 +12,14 @@ import path from "node:path";
 
 const ROUTE_SCRIPT = "~/.claude/scripts/tfx-route.sh";
 export const SLIM_WRAPPER_SUBAGENT_TYPE = "slim-wrapper";
+/** scout 역할 기본 설정 — read-only 탐색 전용 */
+export const SCOUT_ROLE_CONFIG = {
+  cli: "codex",
+  role: "scientist",
+  mcp_profile: "analyze",
+  maxIterations: 2,
+  readOnly: true,
+};
 const ROUTE_LOG_RE = /\[tfx-route\]/i;
 const ROUTE_COMMAND_RE = /(?:^|[\s"'`])(?:bash\s+)?(?:[^"'`\s]*\/)?tfx-route\.sh\b/i;
 const ROUTE_PROMPT_RE = /tfx-route\.sh/i;
@@ -143,6 +151,7 @@ function getRouteTimeout(role, _mcpProfile) {
  * @param {number} [opts.workerIndex] — 검색 힌트 회전에 사용할 워커 인덱스(1-based)
  * @param {string} [opts.searchTool] — 전용 검색 도구 힌트(brave-search|tavily|exa)
  * @param {number} [opts.bashTimeout] — (deprecated, async에서는 무시됨)
+ * @param {number} [opts.maxIterations=3] — 피드백 루프 최대 반복 횟수
  * @returns {string} 슬림 래퍼 프롬프트
  */
 export function buildSlimWrapperPrompt(cli, opts = {}) {
@@ -157,6 +166,7 @@ export function buildSlimWrapperPrompt(cli, opts = {}) {
     workerIndex,
     searchTool = "",
     pipelinePhase = "",
+    maxIterations = 3,
   } = opts;
 
   const routeTimeoutSec = getRouteTimeout(role, mcp_profile);
@@ -165,22 +175,27 @@ export function buildSlimWrapperPrompt(cli, opts = {}) {
     ? `\n파이프라인 단계: ${pipelinePhase}`
     : '';
   const routeEnvPrefix = buildRouteEnvPrefix(agentName, workerIndex, searchTool);
+  const scoutConstraint = (role === "scout" || role === "scientist")
+    ? "\n이 워커는 scout(탐색 전용)이다. 코드를 수정하거나 파일을 생성하지 마라. 기존 코드를 읽고 분석하여 보고만 하라."
+    : "";
 
   // Bash 도구 timeout (모두 600초 이내)
   const launchTimeoutMs = 15000;   // Step 1: fork + job_id 반환
   const waitTimeoutMs = 570000;    // Step 2: 내부 폴링 (540초 대기 + 여유)
   const resultTimeoutMs = 30000;   // Step 3: 결과 읽기
 
-  return `실행 프로토콜 (subagent_type="${SLIM_WRAPPER_SUBAGENT_TYPE}", async):
-1. --async로 백그라운드 시작 → JOB_ID 수신
-2. --job-wait로 완료 대기 (내부 15초 간격 폴링, 최대 540초)
-3. "still_running"이면 Step 2 반복, "done"이면 --job-result로 결과 수집
-4. TaskUpdate + SendMessage → 종료${pipelineHint}
+  return `실행 프로토콜 (subagent_type="${SLIM_WRAPPER_SUBAGENT_TYPE}", async + feedback):
+MAX_ITERATIONS = ${maxIterations}
+ITERATION = 0${pipelineHint}
+
+Step 0 — 시작 보고 (턴 경계 생성):
+TaskUpdate(taskId: "${taskId}", status: "in_progress")
+SendMessage(type: "message", recipient: "${leadName}", content: "작업 시작: ${agentName}", summary: "task ${taskId} started")
 
 [HARD CONSTRAINT] 허용 도구: Bash, TaskUpdate, TaskGet, TaskList, SendMessage만 사용한다.
 Read, Edit, Write, Grep, Glob, Agent, WebSearch, WebFetch 등 다른 모든 도구 사용을 금지한다.
 코드를 직접 읽거나 수정하면 안 된다. 반드시 아래 Bash 명령(tfx-route.sh)을 통해 Codex/Gemini에 위임하라.
-이 규칙을 위반하면 작업 실패로 간주한다.
+이 규칙을 위반하면 작업 실패로 간주한다.${scoutConstraint}
 
 gemini/codex를 직접 호출하지 마라. 반드시 tfx-route.sh를 거쳐야 한다.
 프롬프트를 파일로 저장하지 마라. tfx-route.sh가 인자로 받는다.
@@ -193,25 +208,60 @@ Step 2 — 완료 대기 (내부 폴링, 최대 540초):
 Bash(command: 'bash ${ROUTE_SCRIPT} --job-wait JOB_ID 540', timeout: ${waitTimeoutMs})
 → 주기적 "waiting elapsed=Ns progress=NB" 출력 후 최종 상태:
   "done" → Step 3으로
-  "timeout" 또는 "failed ..." → Step 4로 (실패 보고)
+  "timeout" 또는 "failed ..." → Step 4로 (실패 상태로)
   "still_running ..." → Step 2 반복 (같은 명령 재실행)
 
 Step 3 — 결과 수집:
 Bash(command: 'bash ${ROUTE_SCRIPT} --job-result JOB_ID', timeout: ${resultTimeoutMs})
-→ 출력이 워커 실행 결과이다.
+→ RESULT에 저장.
 
-Step 4 — Claude Code 태스크 동기화 (반드시 실행):
+Step 4 — 결과 보고 (턴 경계 생성, TaskUpdate 하지 않음):
 "done"이면:
-  TaskUpdate(taskId: "${taskId}", status: "completed", metadata: {result: "success"})
-  SendMessage(type: "message", recipient: "${leadName}", content: "완료: ${agentName}", summary: "task ${taskId} success")
+  SendMessage(type: "message", recipient: "${leadName}", content: "결과 (iteration ITERATION): ${agentName} 성공\\n{결과 요약}", summary: "task ${taskId} iteration ITERATION done")
 "timeout" 또는 "failed"이면:
-  TaskUpdate(taskId: "${taskId}", status: "completed", metadata: {result: "failed", error: "상태 메시지"})
-  SendMessage(type: "message", recipient: "${leadName}", content: "실패: ${agentName} (상태)", summary: "task ${taskId} failed")
+  SendMessage(type: "message", recipient: "${leadName}", content: "결과 (iteration ITERATION): ${agentName} 실패\\n{에러 요약}", summary: "task ${taskId} iteration ITERATION failed")
 TFX_NEEDS_FALLBACK 출력 감지 시:
-  TaskUpdate(taskId: "${taskId}", status: "completed", metadata: {result: "fallback", reason: "claude-native"})
-  SendMessage(type: "message", recipient: "${leadName}", content: "fallback 필요: ${agentName} — claude-native 역할은 Claude Agent로 위임 필요", summary: "task ${taskId} fallback")
+  → Step 6으로 즉시 이동 (fallback은 재실행 불가)
 
-Step 5 — TaskUpdate + SendMessage 후 즉시 종료. 추가 도구 호출 금지.`;
+Step 5 — 피드백 대기:
+SendMessage 후 너는 IDLE 상태가 된다. 리드의 응답을 기다려라.
+수신 메시지에 따라:
+  - "재실행:" 포함 → ITERATION++ → ITERATION < MAX_ITERATIONS이면 메시지의 지시를 반영하여 Step 1로. ITERATION >= MAX_ITERATIONS이면 Step 6으로 (반복 한도 초과)
+  - "승인" 또는 기타 → Step 6으로
+  - 메시지 없이 팀이 삭제되면 자동 종료 (처리 불필요)
+
+Step 6 — 최종 종료 (반드시 실행):
+TaskUpdate(taskId: "${taskId}", status: "completed", metadata: {result: "success"|"failed"|"fallback", iterations: ITERATION})
+SendMessage(type: "message", recipient: "${leadName}", content: "최종 완료: ${agentName} (ITERATION회 실행)", summary: "task ${taskId} final")
+→ 종료. 이후 추가 도구 호출 금지.`;
+}
+
+/**
+ * scout 파견용 프롬프트 생성
+ * @param {object} opts
+ * @param {string} opts.question — 탐색 질문
+ * @param {string} [opts.scope] — 탐색 범위 힌트 (파일 패턴)
+ * @param {string} [opts.teamName] — 팀 이름
+ * @param {string} [opts.taskId] — 태스크 ID
+ * @param {string} [opts.agentName] — 에이전트 이름
+ * @param {string} [opts.leadName] — 리드 이름
+ * @returns {string} slim wrapper 프롬프트
+ */
+export function buildScoutDispatchPrompt(opts = {}) {
+  const { question, scope = "", teamName, taskId, agentName, leadName } = opts;
+  const subtask = scope
+    ? `${question} 탐색 범위: ${scope}`
+    : question;
+  return buildSlimWrapperPrompt("codex", {
+    subtask,
+    role: "scientist",
+    teamName,
+    taskId,
+    agentName,
+    leadName,
+    mcp_profile: "analyze",
+    maxIterations: SCOUT_ROLE_CONFIG.maxIterations,
+  });
 }
 
 /**

@@ -32,14 +32,20 @@ argument-hint: "<command|task> [args...]"
 > 2. **비용**: Codex 우선 → Gemini → Claude 최후 수단. `claude` 선택 전 "Codex로 가능한가?" 재확인.
 > 3. **DAG**: SEQUENTIAL/DAG이면 레벨 기반 순차 실행. `.omc/context/{sid}/` 생성, context_output 저장, 실패 시 후속 SKIP.
 > 4. **트리아지**: Codex `--full-auto` 분류 + Opus 인라인 분해. Agent 스폰 금지.
+> 5. **thorough**: `-t`/`--thorough` 시 파이프라인 init 필수. 커맨드 숏컷은 항상 quick.
 
 ## 모드
 
 | 입력 형식 | 모드 | 트리아지 |
 |-----------|------|----------|
-| `/implement JWT 추가` | 커맨드 숏컷 | 없음 (즉시 실행) |
-| `/tfx-auto "리팩터링 + UI"` | 자동 | Codex 분류 → Opus 분해 |
-| `/tfx-auto 3:codex "리뷰"` | 수동 | Opus 분해만 |
+| `/implement JWT 추가` | 커맨드 숏컷 (quick) | 없음 (즉시 실행) |
+| `/tfx-auto "리팩터링 + UI"` | 자동 (quick) | Codex 분류 → Opus 분해 |
+| `/tfx-auto -t "리팩터링 + UI"` | 자동 (thorough) | Codex 분류 → Opus 분해 → Pipeline |
+| `/tfx-auto --thorough "리팩터링"` | 자동 (thorough) | `-t` 동일 |
+| `/tfx-auto 3:codex "리뷰"` | 수동 (quick) | Opus 분해만 |
+
+> **tfx-auto는 `--quick`이 기본.** 커맨드 숏컷·단일 실행에서 plan/verify 오버헤드가 불필요하기 때문.
+> 멀티 태스크 시 tfx-multi로 전환되면 tfx-multi의 기본값(`--thorough`)이 적용된다.
 
 ## 커맨드 숏컷
 
@@ -100,25 +106,77 @@ argument-hint: "<command|task> [args...]"
 
 **수동 모드 (`N:agent_type`):** Codex 분류 건너뜀 → Opus가 N개 서브태스크 분해. N > 10 거부.
 
-## 멀티 태스크 라우팅 (트리아지 후)
+## --thorough 모드
 
-> **트리아지 결과 서브태스크가 2개 이상이면 tfx-multi Native Teams 모드로 자동 전환한다.**
-
-| 서브태스크 수 | 실행 경로 | 이유 |
-|--------------|----------|------|
-| 1개 | tfx-auto 직접 실행 (아래 "실행" 섹션) | 팀 오버헤드 불필요, 경량 fire-and-forget |
-| 2개+ | **tfx-multi Phase 3** (TeamCreate → TaskCreate → Agent 래퍼) | Shift+Down 네비게이션, 상태 추적, fallback |
-
-**전환 방법:** 트리아지 완료 후 서브태스크 배열을 그대로 tfx-multi Phase 3에 전달한다.
-tfx-multi의 Phase 2(트리아지)는 건너뛰고 Phase 3a(TeamCreate)부터 시작한다.
+`-t` 또는 `--thorough` 플래그 시 파이프라인 기반 실행. 커맨드 숏컷에서는 무시된다.
 
 ```
+분기점은 "실행 전략"이지 "계획"이 아님:
+
+TRIAGE
+  │
+  ├─ [thorough] → PIPELINE INIT(plan) → PLAN → PRD → [APPROVAL]
+  │                                                      │
+  │                                      ┌───────────────┤
+  │                                      │               │
+  │                                  [1 task]        [2+ tasks]
+  │                                      │               │
+  │                                  AUTO 직접 실행   TEAM EXEC (multi Phase 3)
+  │                                      │               │
+  │                                      └───────┬───────┘
+  │                                              │
+  │                                          VERIFY → FIX loop → COMPLETE
+  │
+  └─ [quick] → [1 task] → fire-and-forget
+               [2+ tasks] → TEAM EXEC → COLLECT → CLEANUP
+```
+
+### 단일 태스크 thorough
+
+1. `Bash("node hub/bridge.mjs pipeline-init --team ${sid}")` — 파이프라인 초기화 (phase: plan)
+2. Plan: Codex architect → 결과를 `pipeline.writePlanFile()` 저장
+3. PRD: Codex analyst → acceptance criteria 확정
+4. `pipeline_advance_gated` → [Approval Gate] → 사용자 승인 대기
+5. Exec: tfx-auto 직접 실행 (아래 "실행" 섹션)
+6. Verify: Codex verifier → 검증
+7. 실패 시 Fix loop (최대 3회) → Exec 재실행
+8. Complete
+
+### 멀티 태스크 thorough
+
+Plan/PRD/Approval은 tfx-auto에서 실행, 그 후 tfx-multi Phase 3로 전환.
+서브태스크 배열 + `thorough: true` 신호를 함께 전달하여 multi 측에서 verify/fix를 수행.
+
+## 멀티 태스크 라우팅 (트리아지 후)
+
+> **트리아지 결과에 따라 실행 경로 결정.**
+
+| 조건 | 실행 경로 | 이유 |
+|------|----------|------|
+| 1개 + quick | tfx-auto 직접 실행 (fire-and-forget) | 팀 오버헤드 불필요 |
+| 1개 + thorough | tfx-auto 직접 실행 + verify/fix loop | plan→exec→verify 단일 경로 |
+| 2개+ + quick | tfx-multi Phase 3 (TeamCreate 직행) | Shift+Down, 상태 추적 |
+| 2개+ + thorough | Plan/PRD/Approval 후 → tfx-multi Phase 3 + verify/fix | 전체 파이프라인 |
+
+**전환 방법:** 트리아지 완료 후 서브태스크 배열 + thorough 플래그를 tfx-multi Phase 3에 전달.
+tfx-multi의 Phase 2(트리아지)는 건너뛰고, thorough 시 Phase 2.5-2.6도 건너뛴다 (auto에서 이미 수행).
+
+```
+thorough = args에 -t 또는 --thorough 포함
+
 if subtasks.length >= 2:
-  → tfx-multi Phase 3 실행 (트리아지 결과 재사용)
-  → TeamCreate → TaskCreate × N → Agent 래퍼 spawn (Phase 3a~3c)
-  → Phase 4 결과 수집 → Phase 5 정리
+  if thorough:
+    → Pipeline init → Plan → PRD → Approval (tfx-auto에서 수행)
+    → tfx-multi Phase 3 실행 ({ subtasks, thorough: true })
+    → Phase 3.5 verify → Phase 3.6 fix loop → Phase 5 정리
+  else:
+    → tfx-multi Phase 3 실행 ({ subtasks, thorough: false })
+    → Phase 4 결과 수집 → Phase 5 정리
 else:
-  → tfx-auto 직접 실행 (아래)
+  if thorough:
+    → Pipeline init → Plan → PRD → Approval → 직접 실행 → Verify → Fix loop
+  else:
+    → tfx-auto 직접 실행 (아래)
 ```
 
 ## 실행
