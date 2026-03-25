@@ -302,9 +302,9 @@ export function ensureWtProfile() {
         icon: "\u{1F53A}", // 🔺
         tabTitle: "triflux",
         suppressApplicationTitle: true,
-        opacity: 85,
+        opacity: 50,
         useAcrylic: true,
-        unfocusedAppearance: { opacity: 50 },
+        unfocusedAppearance: { opacity: 30 },
         colorScheme: "One Half Dark",
         font: { size: 11 },
         hidden: true, // 프로필 목록에는 숨김 (triflux에서만 사용)
@@ -350,7 +350,7 @@ export function autoAttachTerminal(sessionName, opts = {}) {
   for (const shell of shells) {
     try {
       execSync(
-        `start "" /b wt.exe nt --profile triflux --title triflux -- ${shell} -NoExit -Command "psmux attach -t ${sessionName}"`,
+        `start "" /b wt.exe nt --profile triflux --title triflux -- ${shell} -Command "psmux attach -t ${sessionName}"`,
         { stdio: "ignore", shell: true, timeout: 5000 },
       );
       return true;
