@@ -238,10 +238,13 @@ export async function runHeadlessWithCleanup(assignments, opts = {}) {
   try {
     return await runHeadless(sessionName, assignments, runOpts);
   } finally {
-    try {
-      killPsmuxSession(sessionName);
-    } catch {
-      // 이미 종료된 세션 — 무시
+    try { killPsmuxSession(sessionName); } catch { /* 무시 */ }
+    // WT split pane 껍데기 정리
+    if (process.env.WT_SESSION) {
+      try {
+        execSync("wt.exe -w 0 mf down", { stdio: "ignore", timeout: 2000 });
+        execSync("wt.exe -w 0 close-pane", { stdio: "ignore", timeout: 2000 });
+      } catch { /* 무시 */ }
     }
   }
 }
@@ -369,28 +372,29 @@ export function autoAttachTerminal(sessionName, opts = {}, workerCount = 2) {
   ensureWtProfile(workerCount);
 
   const shells = ["pwsh.exe", "powershell.exe"];
-  // 방법 1: split-pane — 같은 WT 창에서 가로 분할
-  // 워커 수에 따라 split 비율 조정: 1-2→30%, 3-4→40%, 5-6→50%, 7+→60%
-  const splitSize = Math.min(0.6, 0.2 + workerCount * 0.05).toFixed(2);
-  if (process.env.WT_SESSION) {
+  const mode = opts.mode || "auto"; // "split" | "window" | "auto"
+  const preferSplit = mode === "split" || (mode === "auto" && process.env.WT_SESSION);
+  const preferWindow = mode === "window";
+
+  if (preferSplit && !preferWindow && process.env.WT_SESSION) {
+    // inner split — 같은 WT 창에서 가로 분할
+    const splitSize = Math.min(0.5, 0.2 + workerCount * 0.05).toFixed(2);
     for (const shell of shells) {
       try {
-        // 1) 하단 분할 생성
         execSync(
           `wt.exe -w 0 sp -H --size ${splitSize} --profile triflux --title triflux -- ${shell} -Command "psmux attach -t ${sessionName}"`,
           { stdio: "ignore", timeout: 5000 },
         );
-        // 2) 포커스를 Claude Code(위 pane)로 되돌림
         try { execSync(`wt.exe -w 0 mf up`, { stdio: "ignore", timeout: 2000 }); } catch { /* 무시 */ }
         return true;
       } catch { /* 다음 shell */ }
     }
   }
-  // 방법 2 fallback: 새 탭 (WT_SESSION 없거나 sp 실패 시)
+  // 별도 WT 창 (mode=window, 또는 split 실패/불가)
   for (const shell of shells) {
     try {
       execSync(
-        `start "" /b wt.exe nt --profile triflux --title triflux -- ${shell} -Command "psmux attach -t ${sessionName}"`,
+        `start "" /b wt.exe -w new --profile triflux --title "triflux workers (${workerCount})" -- ${shell} -Command "psmux attach -t ${sessionName}"`,
         { stdio: "ignore", shell: true, timeout: 5000 },
       );
       return true;
@@ -457,10 +461,27 @@ export async function runHeadlessInteractive(sessionName, assignments, opts = {}
   // autoAttach를 session_created 시점에 트리거 (CLI 실행 전에 터미널 열림)
   const userOnProgress = runOpts.onProgress;
   let terminalAttached = false;
+  let attachedAsInner = false; // inner split으로 attach했는지 여부
+  const SPLIT_TO_WINDOW_THRESHOLD = 4; // 이 수 이상이면 별도 창
   runOpts.onProgress = (event) => {
     if (autoAttach && event.type === "session_created" && !terminalAttached) {
       terminalAttached = true;
-      autoAttachTerminal(sessionName, {}, assignments.length);
+      if (assignments.length < SPLIT_TO_WINDOW_THRESHOLD) {
+        // 워커 적음 → inner split (같은 창)
+        attachedAsInner = autoAttachTerminal(sessionName, { mode: "split" }, assignments.length);
+      } else {
+        // 워커 많음 → 처음부터 별도 창
+        autoAttachTerminal(sessionName, { mode: "window" }, assignments.length);
+      }
+    }
+    // 동적 마이그레이션: inner split으로 시작했지만 워커가 임계값 도달 시 별도 창으로 전환
+    if (autoAttach && attachedAsInner && event.type === "worker_added") {
+      const currentWorkerNum = parseInt((event.paneName || "").replace("worker-", ""), 10) || 0;
+      if (currentWorkerNum >= SPLIT_TO_WINDOW_THRESHOLD) {
+        // 별도 창으로 마이그레이션 (psmux 세션은 동일 — 새 창에서 전체 pane 표시)
+        autoAttachTerminal(sessionName, { mode: "window" }, assignments.length);
+        attachedAsInner = false;
+      }
     }
     if (userOnProgress) userOnProgress(event);
   };
@@ -531,11 +552,18 @@ export async function runHeadlessInteractive(sessionName, assignments, opts = {}
       return psmuxSessionExists(sessionName);
     },
 
-    /** 세션 종료 */
+    /** 세션 종료 + WT pane 자동 닫기 */
     kill() {
       if (this._killed) return;
       this._killed = true;
       try { killPsmuxSession(sessionName); } catch { /* 무시 */ }
+      // psmux 세션 종료 후 WT split pane 껍데기 정리
+      if (process.env.WT_SESSION) {
+        try {
+          execSync("wt.exe -w 0 mf down", { stdio: "ignore", timeout: 2000 });
+          execSync("wt.exe -w 0 close-pane", { stdio: "ignore", timeout: 2000 });
+        } catch { /* inner split이 아니거나 이미 닫힌 경우 무시 */ }
+      }
     },
   };
 
