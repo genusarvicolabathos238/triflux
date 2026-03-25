@@ -160,19 +160,18 @@ Plan/PRD/Approval은 tfx-auto에서 실행, 그 후 tfx-multi Phase 3로 전환.
 | 2개+ + thorough | Plan/PRD/Approval 후 → headless + verify/fix | headless.mjs |
 | psmux 미설치 fallback | Native Teams (Agent slim wrapper) | native.mjs |
 
-**전환 방법:** 트리아지 완료 후 서브태스크 배열을 headless.runHeadlessInteractive()에 전달.
-Windows Terminal에 psmux 세션이 자동 팝업되어 사용자가 실시간으로 CLI 출력 확인.
+> **MANDATORY: 2개+ 서브태스크 시 headless 엔진 필수**
+> `Agent()` 백그라운드나 `Bash(tfx-route.sh)` 개별 호출로 대체 금지.
+> 반드시 아래 `Bash("tfx multi ...")` 명령으로 headless 엔진에 위임한다.
+
+**전환 방법:**
 
 ```
 thorough = args에 -t 또는 --thorough 포함
 
 if subtasks.length >= 2:
   if psmux 설치됨:
-    → headless.runHeadlessInteractive(assignments, {
-        autoAttach: true,     // WT 자동 팝업
-        progressive: true,    // 실시간 스플릿
-        progressIntervalSec: 10,
-      })
+    → Bash("tfx multi --teammate-mode headless --auto-attach --assign 'cli:prompt:role' ...")
     → if thorough: verify → fix loop
   else:
     → fallback: tfx-multi Phase 3 Native Teams (Agent slim wrapper)
