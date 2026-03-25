@@ -280,6 +280,29 @@ export function applyTrifluxTheme(sessionName) {
  * 반투명 + 비포커스 시 더 투명 + Catppuccin 테마.
  * @returns {boolean} 성공 여부
  */
+/**
+ * WT 기본 프로필의 폰트 크기를 읽는다.
+ * @returns {number} 기본 폰트 크기 (못 읽으면 12)
+ */
+function getWtDefaultFontSize() {
+  const settingsPaths = [
+    join(process.env.LOCALAPPDATA || "", "Packages/Microsoft.WindowsTerminal_8wekyb3d8bbwe/LocalState/settings.json"),
+    join(process.env.LOCALAPPDATA || "", "Microsoft/Windows Terminal/settings.json"),
+  ];
+  for (const p of settingsPaths) {
+    if (!existsSync(p)) continue;
+    try {
+      const settings = JSON.parse(readFileSync(p, "utf8").replace(/^\s*\/\/.*$/gm, ""));
+      // 기본 프로필 or 첫 프로필의 폰트
+      const defaultGuid = settings.defaultProfile;
+      const profiles = settings.profiles?.list || [];
+      const defaultProfile = profiles.find(pr => pr.guid === defaultGuid) || profiles[0];
+      return defaultProfile?.font?.size || settings.profiles?.defaults?.font?.size || 12;
+    } catch { /* 다음 */ }
+  }
+  return 12;
+}
+
 export function ensureWtProfile(workerCount = 2) {
   const settingsPaths = [
     join(process.env.LOCALAPPDATA || "", "Packages/Microsoft.WindowsTerminal_8wekyb3d8bbwe/LocalState/settings.json"),
@@ -306,7 +329,7 @@ export function ensureWtProfile(workerCount = 2) {
         useAcrylic: true,
         unfocusedAppearance: { opacity: 20 },
         colorScheme: "One Half Dark",
-        font: { size: Math.max(6, 9 - Math.floor(workerCount / 2)) },
+        font: { size: Math.max(6, getWtDefaultFontSize() - 1 - Math.floor(workerCount / 2)) },
         hidden: true, // 프로필 목록에는 숨김 (triflux에서만 사용)
       };
 
@@ -346,14 +369,19 @@ export function autoAttachTerminal(sessionName, opts = {}, workerCount = 2) {
   ensureWtProfile(workerCount);
 
   const shells = ["pwsh.exe", "powershell.exe"];
-  // 방법 1: split-pane — 같은 WT 창에서 가로 분할 (하단 40%)
+  // 방법 1: split-pane — 같은 WT 창에서 가로 분할
+  // 워커 수에 따라 split 비율 조정: 1-2→30%, 3-4→40%, 5-6→50%, 7+→60%
+  const splitSize = Math.min(0.6, 0.2 + workerCount * 0.05).toFixed(2);
   if (process.env.WT_SESSION) {
     for (const shell of shells) {
       try {
+        // 1) 하단 분할 생성
         execSync(
-          `wt.exe -w 0 sp -H --size 0.4 --profile triflux --title triflux -- ${shell} -Command "psmux attach -t ${sessionName}"`,
+          `wt.exe -w 0 sp -H --size ${splitSize} --profile triflux --title triflux -- ${shell} -Command "psmux attach -t ${sessionName}"`,
           { stdio: "ignore", timeout: 5000 },
         );
+        // 2) 포커스를 Claude Code(위 pane)로 되돌림
+        try { execSync(`wt.exe -w 0 mf up`, { stdio: "ignore", timeout: 2000 }); } catch { /* 무시 */ }
         return true;
       } catch { /* 다음 shell */ }
     }

@@ -449,26 +449,28 @@ function getTeamRow() {
     ? `${Math.round((Date.now() - teamState.startedAt) / 60000)}m`
     : "";
 
-  // 멤버 상태 아이콘 요약 (60col 이상에서만 표시)
+  // CLI 브랜드 이모지 매핑
+  const cliBrand = { codex: "\u{1F7E2}", gemini: "\u{1F535}", claude: "\u{1F7E0}" }; // 🟢🔵🟠
+  // 멤버 상태: 이모지 + 상태기호 (60col 이상)
   const memberIcons = (CURRENT_TIER === "full" || CURRENT_TIER === "compact" || CURRENT_TIER === "minimal") ? workers.map((m) => {
     const task = tasks.find((t) => t.owner === m.name);
-    const icon = task?.status === "completed" ? green("✓")
-      : task?.status === "in_progress" ? yellow("●")
+    const status = task?.status === "completed" ? green("✓")
+      : task?.status === "in_progress" ? yellow("⋯")
       : task?.status === "failed" ? red("✗")
-      : dim("○");
-    const tag = m.cli ? m.cli.charAt(0) : "?";
-    return `${tag}${icon}`;
+      : dim("◌");
+    const emoji = cliBrand[m.cli] || dim("●");
+    return `${emoji}${status}`;
   }).join(" ") : "";
 
-  // done / failed 상태 텍스트
+  // 진행 텍스트 — "team" 제거, 숫자만
   const doneText = failed > 0
     ? `${completed}/${total} ${red(`${failed}✗`)}`
-    : `${completed}/${total} done`;
+    : `${completed}/${total}`;
 
-  const leftText = elapsed ? `team ${doneText} ${dim(elapsed)}` : `team ${doneText}`;
+  const leftText = elapsed ? `${doneText} ${dim(elapsed)}` : doneText;
 
   return {
-    prefix: bold(claudeOrange("⬡")),
+    prefix: bold(claudeOrange("▲")),
     left: leftText,
     right: memberIcons,
   };
