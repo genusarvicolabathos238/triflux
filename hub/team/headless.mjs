@@ -280,7 +280,7 @@ export function applyTrifluxTheme(sessionName) {
  * 반투명 + 비포커스 시 더 투명 + Catppuccin 테마.
  * @returns {boolean} 성공 여부
  */
-export function ensureWtProfile() {
+export function ensureWtProfile(workerCount = 2) {
   const settingsPaths = [
     join(process.env.LOCALAPPDATA || "", "Packages/Microsoft.WindowsTerminal_8wekyb3d8bbwe/LocalState/settings.json"),
     join(process.env.LOCALAPPDATA || "", "Microsoft/Windows Terminal/settings.json"),
@@ -306,7 +306,7 @@ export function ensureWtProfile() {
         useAcrylic: true,
         unfocusedAppearance: { opacity: 20 },
         colorScheme: "One Half Dark",
-        font: { size: 11 },
+        font: { size: Math.max(6, 9 - Math.floor(workerCount / 2)) },
         hidden: true, // 프로필 목록에는 숨김 (triflux에서만 사용)
       };
 
@@ -334,7 +334,7 @@ export function ensureWtProfile() {
  * @param {string} [opts.position] — "right" | "left" | 없으면 기본 위치
  * @returns {boolean} 성공 여부
  */
-export function autoAttachTerminal(sessionName, opts = {}) {
+export function autoAttachTerminal(sessionName, opts = {}, workerCount = 2) {
   try {
     // Windows Terminal이 설치되어 있는지 확인
     execSync("where wt.exe", { stdio: "ignore" });
@@ -342,11 +342,23 @@ export function autoAttachTerminal(sessionName, opts = {}) {
     return false; // wt.exe 미설치 — 사용자에게 수동 attach 안내 필요
   }
 
-  // triflux WT 프로필 확보 (투명도 + 테마)
-  ensureWtProfile();
+  // triflux WT 프로필 확보 (투명도 + 테마 + 폰트 크기)
+  ensureWtProfile(workerCount);
 
-  // PowerShell 래핑 + "--" 구분자 + 포커스 비탈취
   const shells = ["pwsh.exe", "powershell.exe"];
+  // 방법 1: split-pane — 같은 WT 창에서 가로 분할 (하단 40%)
+  if (process.env.WT_SESSION) {
+    for (const shell of shells) {
+      try {
+        execSync(
+          `wt.exe -w 0 sp -H --size 0.4 --profile triflux --title triflux -- ${shell} -Command "psmux attach -t ${sessionName}"`,
+          { stdio: "ignore", timeout: 5000 },
+        );
+        return true;
+      } catch { /* 다음 shell */ }
+    }
+  }
+  // 방법 2 fallback: 새 탭 (WT_SESSION 없거나 sp 실패 시)
   for (const shell of shells) {
     try {
       execSync(
@@ -354,7 +366,7 @@ export function autoAttachTerminal(sessionName, opts = {}) {
         { stdio: "ignore", shell: true, timeout: 5000 },
       );
       return true;
-    } catch { /* 다음 shell 시도 */ }
+    } catch { /* 다음 shell */ }
   }
   return false;
 }
@@ -420,7 +432,7 @@ export async function runHeadlessInteractive(sessionName, assignments, opts = {}
   runOpts.onProgress = (event) => {
     if (autoAttach && event.type === "session_created" && !terminalAttached) {
       terminalAttached = true;
-      autoAttachTerminal(sessionName);
+      autoAttachTerminal(sessionName, {}, assignments.length);
     }
     if (userOnProgress) userOnProgress(event);
   };
