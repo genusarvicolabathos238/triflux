@@ -667,7 +667,10 @@ export async function waitForPattern(sessionName, paneNameOrTarget, pattern, tim
   }
 
   const paneName = pane.title || paneNameOrTarget;
-  const logPath = getCaptureLogPath(sessionName, paneName);
+  // opts.logPath: dispatch 시 확정된 캡처 로그 경로 직접 지정 (타이틀 변경 내성)
+  const logPath = (opts.logPath && existsSync(opts.logPath))
+    ? opts.logPath
+    : getCaptureLogPath(sessionName, paneName);
   if (!existsSync(logPath)) {
     throw new Error(`캡처 로그가 없습니다. 먼저 startCapture(${sessionName}, ${paneName})를 호출하세요.`);
   }
@@ -679,7 +682,13 @@ export async function waitForPattern(sessionName, paneNameOrTarget, pattern, tim
   while (Date.now() <= deadline) {
     // E4 크래시 복구: capture 실패 시 세션 생존 체크
     try {
-      refreshCaptureSnapshot(sessionName, pane.paneId);
+      if (opts.logPath) {
+        // logPath 직접 지정 시 — 셸 타이틀 변경과 무관하게 올바른 파일에 기록
+        const snapshot = psmuxExec(["capture-pane", "-t", pane.paneId, "-p"]);
+        writeFileSync(logPath, snapshot, "utf8");
+      } else {
+        refreshCaptureSnapshot(sessionName, pane.paneId);
+      }
     } catch {
       if (!psmuxSessionExists(sessionName)) {
         return {

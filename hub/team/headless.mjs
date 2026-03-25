@@ -171,7 +171,9 @@ export async function runHeadless(sessionName, assignments, opts = {}) {
       };
     }
 
-    const completion = await waitForCompletion(sessionName, d.paneName, d.token, timeoutSec, pollOpts);
+    // dispatch 시 확정된 logPath를 전달 — 셸이 pane 타이틀 변경해도 캡처 로그 매칭 유지
+    if (d.logPath) pollOpts.logPath = d.logPath;
+    const completion = await waitForCompletion(sessionName, d.paneId || d.paneName, d.token, timeoutSec, pollOpts);
 
     const output = completion.matched
       ? readResult(d.resultFile, d.paneId)
@@ -247,6 +249,8 @@ export function applyTrifluxTheme(sessionName) {
     ["pane-border-style", "fg=#45475a"],
     // Status bar 위치
     ["status-position", "bottom"],
+    // 셸이 pane 타이틀을 변경하는 것 방지 (캡처 로그 경로 안정성)
+    ["allow-rename", "off"],
   ];
   for (const [key, value] of opts) {
     try { psmuxExec(["set-option", "-t", sessionName, key, value]); } catch { /* 무시 */ }
@@ -272,18 +276,19 @@ export function autoAttachTerminal(sessionName, opts = {}) {
     return false; // wt.exe 미설치 — 사용자에게 수동 attach 안내 필요
   }
 
-  try {
-    // Fix P2: argv 스타일 — shell injection 방지
-    execFileSync("wt.exe", ["-w", "0", "nt", "psmux", "attach", "-t", sessionName], { stdio: "ignore" });
-    return true;
-  } catch {
+  // PowerShell 래핑 — wt가 psmux를 파일로 인식하는 문제 방지
+  // pwsh.exe (PS7) 우선, 없으면 powershell.exe (PS5.1) fallback
+  const shells = ["pwsh.exe", "powershell.exe"];
+  for (const shell of shells) {
     try {
-      execFileSync("wt.exe", ["psmux", "attach", "-t", sessionName], { stdio: "ignore" });
+      execFileSync("wt.exe", [
+        "nt", shell, "-NoExit", "-Command",
+        `psmux attach -t ${sessionName}`,
+      ], { stdio: "ignore" });
       return true;
-    } catch {
-      return false;
-    }
+    } catch { /* 다음 shell 시도 */ }
   }
+  return false;
 }
 
 /**
