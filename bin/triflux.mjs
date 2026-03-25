@@ -1615,10 +1615,10 @@ function cmdUpdate() {
             stdio: ["pipe", "pipe", "pipe"],
             windowsHide: true,
           }).trim().split(/\r?\n/)[0];
-        } catch (retryErr) {
-          // Windows: 자기 자신의 파일 잠금으로 첫 시도 실패 가능 → 1회 재시도
-          info("첫 시도 실패, 재시도 중...");
-          result = execSync(npmCmd, {
+        } catch {
+          // Windows: 자기 자신의 파일 잠금으로 첫 시도 실패 가능 → --force 재시도
+          info("첫 시도 실패, --force 재시도 중...");
+          result = execSync(`${npmCmd} --force`, {
             encoding: "utf8",
             timeout: 90000,
             stdio: ["pipe", "pipe", "pipe"],
