@@ -4,7 +4,7 @@
 // v6.0.0: Lead-direct 모드 (runHeadlessInteractive, autoAttachTerminal)
 // 의존성: psmux.mjs (Node.js 내장 모듈만 사용)
 import { join } from "node:path";
-import { readFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { execSync, execFileSync } from "node:child_process";
 import {
@@ -275,6 +275,54 @@ export function applyTrifluxTheme(sessionName) {
   }
 }
 
+/**
+ * Windows Terminal에 triflux 프로필을 자동 생성/갱신한다.
+ * 반투명 + 비포커스 시 더 투명 + Catppuccin 테마.
+ * @returns {boolean} 성공 여부
+ */
+export function ensureWtProfile() {
+  const settingsPaths = [
+    join(process.env.LOCALAPPDATA || "", "Packages/Microsoft.WindowsTerminal_8wekyb3d8bbwe/LocalState/settings.json"),
+    join(process.env.LOCALAPPDATA || "", "Microsoft/Windows Terminal/settings.json"),
+  ];
+
+  for (const settingsPath of settingsPaths) {
+    if (!existsSync(settingsPath)) continue;
+    try {
+      const raw = readFileSync(settingsPath, "utf8");
+      // JSON with comments — 간단한 strip (// 주석만)
+      const cleaned = raw.replace(/^\s*\/\/.*$/gm, "");
+      const settings = JSON.parse(cleaned);
+      if (!settings.profiles?.list) continue;
+
+      const existing = settings.profiles.list.findIndex(p => p.name === "triflux");
+      const profile = {
+        name: "triflux",
+        commandline: "psmux",
+        icon: "\u{1F53A}", // 🔺
+        tabTitle: "triflux",
+        suppressApplicationTitle: true,
+        opacity: 85,
+        useAcrylic: true,
+        unfocusedAppearance: { opacity: 50 },
+        colorScheme: "One Half Dark",
+        font: { size: 11 },
+        hidden: true, // 프로필 목록에는 숨김 (triflux에서만 사용)
+      };
+
+      if (existing >= 0) {
+        settings.profiles.list[existing] = { ...settings.profiles.list[existing], ...profile };
+      } else {
+        settings.profiles.list.push(profile);
+      }
+
+      writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf8");
+      return true;
+    } catch { /* 파싱 실패 — 다음 경로 */ }
+  }
+  return false;
+}
+
 // ─── v6.0.0: Lead-Direct Interactive Mode ───
 
 /**
@@ -294,14 +342,15 @@ export function autoAttachTerminal(sessionName, opts = {}) {
     return false; // wt.exe 미설치 — 사용자에게 수동 attach 안내 필요
   }
 
+  // triflux WT 프로필 확보 (투명도 + 테마)
+  ensureWtProfile();
+
   // PowerShell 래핑 + "--" 구분자 + 포커스 비탈취
-  // pwsh.exe (PS7) 우선, 없으면 powershell.exe (PS5.1) fallback
   const shells = ["pwsh.exe", "powershell.exe"];
   for (const shell of shells) {
     try {
-      // start "" /b — 포커스를 현재 창에 유지 (사용자 타이핑 보호)
       execSync(
-        `start "" /b wt.exe nt --title triflux -- ${shell} -NoExit -Command "psmux attach -t ${sessionName}"`,
+        `start "" /b wt.exe nt --profile triflux --title triflux -- ${shell} -NoExit -Command "psmux attach -t ${sessionName}"`,
         { stdio: "ignore", shell: true, timeout: 5000 },
       );
       return true;
