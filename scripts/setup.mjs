@@ -106,6 +106,46 @@ const SYNC_MAP = [
     label: "hud-qos-status.mjs",
   },
   {
+    src: join(PLUGIN_ROOT, "hud", "colors.mjs"),
+    dst: join(CLAUDE_DIR, "hud", "colors.mjs"),
+    label: "hud/colors.mjs",
+  },
+  {
+    src: join(PLUGIN_ROOT, "hud", "constants.mjs"),
+    dst: join(CLAUDE_DIR, "hud", "constants.mjs"),
+    label: "hud/constants.mjs",
+  },
+  {
+    src: join(PLUGIN_ROOT, "hud", "terminal.mjs"),
+    dst: join(CLAUDE_DIR, "hud", "terminal.mjs"),
+    label: "hud/terminal.mjs",
+  },
+  {
+    src: join(PLUGIN_ROOT, "hud", "utils.mjs"),
+    dst: join(CLAUDE_DIR, "hud", "utils.mjs"),
+    label: "hud/utils.mjs",
+  },
+  {
+    src: join(PLUGIN_ROOT, "hud", "renderers.mjs"),
+    dst: join(CLAUDE_DIR, "hud", "renderers.mjs"),
+    label: "hud/renderers.mjs",
+  },
+  {
+    src: join(PLUGIN_ROOT, "hud", "providers", "claude.mjs"),
+    dst: join(CLAUDE_DIR, "hud", "providers", "claude.mjs"),
+    label: "hud/providers/claude.mjs",
+  },
+  {
+    src: join(PLUGIN_ROOT, "hud", "providers", "codex.mjs"),
+    dst: join(CLAUDE_DIR, "hud", "providers", "codex.mjs"),
+    label: "hud/providers/codex.mjs",
+  },
+  {
+    src: join(PLUGIN_ROOT, "hud", "providers", "gemini.mjs"),
+    dst: join(CLAUDE_DIR, "hud", "providers", "gemini.mjs"),
+    label: "hud/providers/gemini.mjs",
+  },
+  {
     src: join(PLUGIN_ROOT, "scripts", "notion-read.mjs"),
     dst: join(CLAUDE_DIR, "scripts", "notion-read.mjs"),
     label: "notion-read.mjs",
