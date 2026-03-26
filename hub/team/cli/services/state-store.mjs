@@ -1,4 +1,4 @@
-import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
@@ -11,24 +11,38 @@ export const TEAM_PROFILE = (() => {
   return raw === "codex-team" ? "codex-team" : "team";
 })();
 
-const TEAM_STATE_FILE = join(
-  HUB_PID_DIR,
-  TEAM_PROFILE === "codex-team" ? "team-state-codex-team.json" : "team-state.json",
-);
+export const SESSION_ID = process.env.CLAUDE_SESSION_ID || `s${Date.now()}`;
 
-export function loadTeamState() {
+function getStatePath(sessionId) {
+  if (sessionId) return join(HUB_PID_DIR, `team-state-${sessionId}.json`);
+  return join(HUB_PID_DIR, TEAM_PROFILE === "codex-team" ? "team-state-codex-team.json" : "team-state.json");
+}
+
+export function loadTeamState(sessionId) {
+  const resolvedId = sessionId || SESSION_ID;
+  const sessionPath = getStatePath(resolvedId);
   try {
-    return JSON.parse(readFileSync(TEAM_STATE_FILE, "utf8"));
+    if (existsSync(sessionPath)) return JSON.parse(readFileSync(sessionPath, "utf8"));
   } catch {
     return null;
   }
+  // 세션별 파일 없으면 기존 team-state.json fallback
+  const legacyPath = getStatePath(null);
+  try {
+    if (existsSync(legacyPath)) return JSON.parse(readFileSync(legacyPath, "utf8"));
+  } catch {
+    return null;
+  }
+  return null;
 }
 
-export function saveTeamState(state) {
-  mkdirSync(dirname(TEAM_STATE_FILE), { recursive: true });
-  writeFileSync(TEAM_STATE_FILE, JSON.stringify({ ...state, profile: TEAM_PROFILE }, null, 2) + "\n");
+export function saveTeamState(state, sessionId) {
+  const path = getStatePath(sessionId || state.sessionId || SESSION_ID);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify({ ...state, profile: TEAM_PROFILE }, null, 2) + "\n");
 }
 
-export function clearTeamState() {
-  try { unlinkSync(TEAM_STATE_FILE); } catch {}
+export function clearTeamState(sessionId) {
+  const path = getStatePath(sessionId || SESSION_ID);
+  if (existsSync(path)) unlinkSync(path);
 }

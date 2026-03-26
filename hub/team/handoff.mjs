@@ -42,6 +42,18 @@ Rules:
 `.trim();
 
 /**
+ * CLI 프롬프트 길이 제한을 고려한 축약 HANDOFF 지시
+ */
+export const HANDOFF_INSTRUCTION_SHORT =
+`After completing, output this block at the end:
+--- HANDOFF ---
+status: ok | partial | failed
+lead_action: accept | needs_read | retry | reassign
+verdict: <one sentence>
+files_changed: <comma-separated paths or "none">
+confidence: high | medium | low`;
+
+/**
  * raw 텍스트에서 HANDOFF 블록을 파싱한다.
  * @param {string} rawText
  * @returns {object|null} 파싱된 필드 객체, 블록이 없으면 null

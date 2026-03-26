@@ -18,26 +18,26 @@ const ROOT = join(__dirname, "../..");
 const RULES_PATH = join(ROOT, "hooks/keyword-rules.json");
 const ROUTE_SH = join(ROOT, "scripts/tfx-route.sh").replace(/\\/g, "/");
 
-// ── 헬퍼: route_agent 라우팅 테이블을 소스에서 직접 파싱 ──
-// bash 실행 대신 소스 파일에서 case 문을 정규식으로 파싱하여 JS 매핑 생성
+// ── 헬퍼: route_agent 라우팅 테이블 파싱 ──
+// CLI_TYPE: agent-map.json 단일 소스, 상세 설정(effort/runMode): case 문 파싱
 function parseRouteTable() {
+  const agentMap = JSON.parse(readFileSync(join(ROOT, "hub/team/agent-map.json"), "utf8"));
   const src = readFileSync(join(ROOT, "scripts/tfx-route.sh"), "utf8");
-  // route_agent 함수 블록 추출
   const funcMatch = src.match(/route_agent\(\)\s*\{([\s\S]*?)^\}/m);
   if (!funcMatch) return {};
 
   const funcBody = funcMatch[1];
   const table = {};
-  // 패턴: agent-name) ... CLI_TYPE="xxx" ... CLI_EFFORT="yyy" ... RUN_MODE="zzz" ... ;;
   const caseRe = /^\s+(\S+(?:\|[^\)]+)?)\)\s*\n([\s\S]*?)\s*;;\s*$/gm;
   let m;
   while ((m = caseRe.exec(funcBody)) !== null) {
     const agents = m[1].split("|").map((a) => a.trim());
     const block = m[2];
-    const cliType = block.match(/CLI_TYPE="([^"]+)"/)?.[1] || null;
     const effort = block.match(/CLI_EFFORT="([^"]+)"/)?.[1] || null;
     const runMode = block.match(/RUN_MODE="([^"]+)"/)?.[1] || null;
     for (const agent of agents) {
+      const rawType = agentMap[agent] || null;
+      const cliType = rawType === "claude" ? "claude-native" : rawType;
       table[agent] = { CLI_TYPE: cliType, CLI_EFFORT: effort, RUN_MODE: runMode };
     }
   }
@@ -332,5 +332,36 @@ describe("tfx-route.sh: 기본 검증", () => {
     const vMatch = src.match(/^VERSION="?([\d.]+)"?/m);
     assert.ok(vMatch, "VERSION= 선언이 있어야 함");
     assert.match(vMatch[1], /^2\.\d+$/, `버전이 2.x 형식이어야 함: ${vMatch[1]}`);
+  });
+});
+
+// ========================================================================
+// 9. agent-map.json ↔ route_agent() 교차 검증
+// ========================================================================
+const agentMap = JSON.parse(readFileSync(join(ROOT, "hub/team/agent-map.json"), "utf8"));
+
+describe("agent-map.json ↔ route_agent() 교차 검증", () => {
+  it("agent-map.json의 모든 에이전트가 route_agent() case에 존재", () => {
+    for (const agent of Object.keys(agentMap)) {
+      assert.ok(ROUTE_TABLE[agent], `agent-map.json의 "${agent}"가 route_agent()에 없음`);
+    }
+  });
+
+  it("route_agent()의 모든 에이전트가 agent-map.json에 존재", () => {
+    for (const agent of Object.keys(ROUTE_TABLE)) {
+      if (agent === "*") continue; // 와일드카드 기본 케이스는 제외
+      // * fallback 내 nested "case $CLI_TYPE" 블록에서 파싱된 CLI_TYPE 값은 제외
+      // (agent-map.json은 "claude"를 사용, route.sh는 "claude-native"로 변환)
+      if (!agentMap[agent] && agent === "claude-native") continue;
+      assert.ok(agentMap[agent], `route_agent()의 "${agent}"가 agent-map.json에 없음`);
+    }
+  });
+
+  it("headless resolveCliType이 agent-map.json과 일치", async () => {
+    const { resolveCliType } = await import("../../hub/team/headless.mjs");
+    for (const [agent, expected] of Object.entries(agentMap)) {
+      assert.equal(resolveCliType(agent), expected,
+        `${agent}: resolveCliType(${expected}) ≠ ${resolveCliType(agent)}`);
+    }
   });
 });

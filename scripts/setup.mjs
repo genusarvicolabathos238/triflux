@@ -9,6 +9,7 @@ import { join, dirname } from "path";
 import { homedir } from "os";
 import { spawn, execFileSync } from "child_process";
 import { fileURLToPath } from "url";
+import { cleanupTmpFiles } from "./tmp-cleanup.mjs";
 
 const PLUGIN_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const CLAUDE_DIR = join(homedir(), ".claude");
@@ -134,6 +135,11 @@ const SYNC_MAP = [
     src: join(PLUGIN_ROOT, "scripts", "headless-guard.mjs"),
     dst: join(CLAUDE_DIR, "scripts", "headless-guard.mjs"),
     label: "headless-guard.mjs",
+  },
+  {
+    src: join(PLUGIN_ROOT, "scripts", "headless-guard-fast.sh"),
+    dst: join(CLAUDE_DIR, "scripts", "headless-guard-fast.sh"),
+    label: "headless-guard-fast.sh",
   },
 ];
 
@@ -355,69 +361,153 @@ if (existsSync(skillsSrc)) {
   }
 }
 
-// ── settings.json statusLine 자동 설정 ──
+// ── settings.json 통합 R/W ──
+// 3개 섹션(statusLine, agentTeams, hooks)을 1회 read → 일괄 수정 → 1회 write
 
 const settingsPath = join(CLAUDE_DIR, "settings.json");
 const hudPath = join(CLAUDE_DIR, "hud", "hud-qos-status.mjs");
 
-if (existsSync(hudPath)) {
-  try {
-    let settings = {};
-    if (existsSync(settingsPath)) {
-      settings = JSON.parse(readFileSync(settingsPath, "utf8"));
-    }
+/**
+ * statusLine 섹션 적용.
+ * @param {object} s - settings 객체 (직접 변경)
+ * @returns {boolean} 변경 여부
+ */
+function applyStatusLine(s) {
+  if (!existsSync(hudPath)) return false;
+  const currentCmd = s.statusLine?.command || "";
+  if (currentCmd.includes("hud-qos-status.mjs")) return false;
 
-    // statusLine이 없거나 hud-qos-status.mjs를 가리키지 않는 경우에만 설정
-    const currentCmd = settings.statusLine?.command || "";
-    if (!currentCmd.includes("hud-qos-status.mjs")) {
-      const nodePath = process.execPath.replace(/\\/g, "/");
-      const hudForward = hudPath.replace(/\\/g, "/");
+  const nodePath = process.execPath.replace(/\\/g, "/");
+  const hudForward = hudPath.replace(/\\/g, "/");
+  const nodeRef = nodePath.includes(" ") ? `"${nodePath}"` : nodePath;
+  const hudRef = hudForward.includes(" ") ? `"${hudForward}"` : hudForward;
 
-      // Windows: 경로에 공백이 있으면 큰따옴표 감싸기
-      const nodeRef = nodePath.includes(" ") ? `"${nodePath}"` : nodePath;
-      const hudRef = hudForward.includes(" ") ? `"${hudForward}"` : hudForward;
-
-      settings.statusLine = {
-        type: "command",
-        command: `${nodeRef} ${hudRef}`,
-      };
-
-      writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf8");
-      synced++;
-    }
-  } catch {
-    // settings.json 파싱 실패 시 무시 — 기존 설정 보존
-  }
+  s.statusLine = { type: "command", command: `${nodeRef} ${hudRef}` };
+  return true;
 }
 
-// ── Agent Teams 환경변수 자동 설정 ──
+/**
+ * Agent Teams 환경변수 섹션 적용.
+ * @param {object} s - settings 객체 (직접 변경)
+ * @returns {boolean} 변경 여부
+ */
+function applyAgentTeams(s) {
+  if (!s.env) s.env = {};
+  let changed = false;
 
-try {
-  let agentSettings = {};
-  if (existsSync(settingsPath)) {
-    agentSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  if (s.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS !== "1") {
+    s.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1";
+    changed = true;
   }
-
-  if (!agentSettings.env) agentSettings.env = {};
-  let agentSettingsChanged = false;
-
-  if (agentSettings.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS !== "1") {
-    agentSettings.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1";
-    agentSettingsChanged = true;
-  }
-
   // teammateMode: auto (tmux 밖이면 in-process, 안이면 split-pane)
-  if (!agentSettings.teammateMode) {
-    agentSettings.teammateMode = "auto";
-    agentSettingsChanged = true;
+  if (!s.teammateMode) {
+    s.teammateMode = "auto";
+    changed = true;
+  }
+  return changed;
+}
+
+/**
+ * SessionStart + PreToolUse 훅 섹션 적용.
+ * @param {object} s - settings 객체 (직접 변경)
+ * @returns {boolean} 변경 여부
+ */
+function applyHooks(s) {
+  if (!s.hooks) s.hooks = {};
+  let changed = false;
+
+  // ── SessionStart 훅 ──
+  if (!Array.isArray(s.hooks.SessionStart)) s.hooks.SessionStart = [];
+
+  const hasTrifluxHooks = s.hooks.SessionStart.some((entry) =>
+    Array.isArray(entry.hooks) &&
+    entry.hooks.some((h) => typeof h.command === "string" && h.command.includes("triflux")),
+  );
+
+  if (!hasTrifluxHooks) {
+    const nodePath = process.execPath.replace(/\\/g, "/");
+    const nodeRef = nodePath.includes(" ") ? `"${nodePath}"` : nodePath;
+    const pluginRoot = PLUGIN_ROOT.replace(/\\/g, "/");
+
+    s.hooks.SessionStart.push({
+      matcher: "*",
+      hooks: [
+        {
+          type: "command",
+          command: `${nodeRef} "${pluginRoot}/scripts/setup.mjs"`,
+          timeout: 10,
+        },
+        {
+          type: "command",
+          command: `${nodeRef} "${pluginRoot}/scripts/hub-ensure.mjs"`,
+          timeout: 8,
+        },
+        {
+          type: "command",
+          command: `${nodeRef} "${pluginRoot}/scripts/preflight-cache.mjs"`,
+          timeout: 5,
+        },
+      ],
+    });
+    changed = true;
   }
 
-  if (agentSettingsChanged) {
-    writeFileSync(settingsPath, JSON.stringify(agentSettings, null, 2) + "\n", "utf8");
-    synced++;
+  // ── PreToolUse 훅: headless-guard (auto-route) ──
+  if (!Array.isArray(s.hooks.PreToolUse)) s.hooks.PreToolUse = [];
+
+  const guardScriptPath = join(CLAUDE_DIR, "scripts", "headless-guard-fast.sh").replace(/\\/g, "/");
+  const hasGuardHook = s.hooks.PreToolUse.some((entry) =>
+    Array.isArray(entry.hooks) &&
+    entry.hooks.some((h) => typeof h.command === "string" && h.command.includes("headless-guard")),
+  );
+
+  if (!hasGuardHook && existsSync(guardScriptPath.replace(/\//g, "\\"))) {
+    s.hooks.PreToolUse.push({
+      matcher: "Bash|Agent",
+      hooks: [
+        {
+          type: "command",
+          command: `bash "${guardScriptPath}"`,
+          timeout: 3,
+        },
+      ],
+    });
+    changed = true;
+  } else if (hasGuardHook) {
+    // 기존 훅 경로를 동기화된 경로로 업데이트
+    for (const entry of s.hooks.PreToolUse) {
+      if (!Array.isArray(entry.hooks)) continue;
+      for (const h of entry.hooks) {
+        if (typeof h.command === "string" && h.command.includes("headless-guard") && !h.command.includes(guardScriptPath)) {
+          h.command = `bash "${guardScriptPath}"`;
+          changed = true;
+        }
+      }
+    }
   }
-} catch {
-  // settings.json 파싱 실패 시 무시 — 기존 설정 보존
+
+  return changed;
+}
+
+// 1회 읽기
+let settings = {};
+if (existsSync(settingsPath)) {
+  try { settings = JSON.parse(readFileSync(settingsPath, "utf8")); } catch { /* 기존 설정 보존 */ }
+}
+
+// 3개 섹션 일괄 수정 (각각 try-catch로 독립 실행)
+let settingsChanged = false;
+try { if (applyStatusLine(settings)) { settingsChanged = true; synced++; } } catch {}
+try { if (applyAgentTeams(settings)) { settingsChanged = true; synced++; } } catch {}
+try { if (applyHooks(settings)) { settingsChanged = true; synced++; } } catch {}
+
+// 1회 쓰기
+if (settingsChanged) {
+  try {
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf8");
+  } catch {
+    // settings.json 쓰기 실패 시 무시
+  }
 }
 
 // ── Stale PID 파일 정리 (hub 좀비 방지) ──
@@ -526,110 +616,8 @@ if (existsSync(mcpCheck)) {
   child.unref(); // 부모 프로세스와 분리 — 비동기 실행
 }
 
-// ── SessionStart 훅 자동 등록 (settings.json) ──
-// .claude-plugin/ 개발 플러그인의 SessionStart 훅은 플러그인 로드 시점 문제로
-// 실행되지 않을 수 있으므로, settings.json에 직접 등록한다.
-// hub-ensure.mjs는 settings.json 훅으로만 실행 (이중 spawn 방지).
-
-try {
-  let hookSettings = {};
-  if (existsSync(settingsPath)) {
-    hookSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
-  }
-
-  if (!hookSettings.hooks) hookSettings.hooks = {};
-  if (!Array.isArray(hookSettings.hooks.SessionStart)) {
-    hookSettings.hooks.SessionStart = [];
-  }
-
-  const existingHooks = hookSettings.hooks.SessionStart;
-  const hasTrifluxHooks = existingHooks.some((entry) =>
-    Array.isArray(entry.hooks) &&
-    entry.hooks.some((h) => typeof h.command === "string" && h.command.includes("triflux")),
-  );
-
-  if (!hasTrifluxHooks) {
-    const nodePath = process.execPath.replace(/\\/g, "/");
-    const nodeRef = nodePath.includes(" ") ? `"${nodePath}"` : nodePath;
-    const pluginRoot = PLUGIN_ROOT.replace(/\\/g, "/");
-
-    const trifluxHookEntry = {
-      matcher: "*",
-      hooks: [
-        {
-          type: "command",
-          command: `${nodeRef} "${pluginRoot}/scripts/setup.mjs"`,
-          timeout: 10,
-        },
-        {
-          type: "command",
-          command: `${nodeRef} "${pluginRoot}/scripts/hub-ensure.mjs"`,
-          timeout: 8,
-        },
-        {
-          type: "command",
-          command: `${nodeRef} "${pluginRoot}/scripts/preflight-cache.mjs"`,
-          timeout: 5,
-        },
-      ],
-    };
-
-    hookSettings.hooks.SessionStart.push(trifluxHookEntry);
-    writeFileSync(settingsPath, JSON.stringify(hookSettings, null, 2) + "\n", "utf8");
-    synced++;
-  }
-
-  // ── PreToolUse 훅: headless-guard (auto-route) ──
-  // Phase 3 headless 모드 활성 중 tfx-route.sh 개별 호출을
-  // headless 명령으로 자동 변환한다.
-  if (!Array.isArray(hookSettings.hooks.PreToolUse)) {
-    hookSettings.hooks.PreToolUse = [];
-  }
-
-  const guardScriptPath = join(CLAUDE_DIR, "scripts", "headless-guard.mjs").replace(/\\/g, "/");
-  const hasGuardHook = hookSettings.hooks.PreToolUse.some((entry) =>
-    Array.isArray(entry.hooks) &&
-    entry.hooks.some((h) => typeof h.command === "string" && h.command.includes("headless-guard")),
-  );
-
-  if (!hasGuardHook && existsSync(guardScriptPath.replace(/\//g, "\\"))) {
-    const nodePath = process.execPath.replace(/\\/g, "/");
-    const nodeRef = nodePath.includes(" ") ? `"${nodePath}"` : nodePath;
-
-    hookSettings.hooks.PreToolUse.push({
-      matcher: "Bash|Agent",
-      hooks: [
-        {
-          type: "command",
-          command: `${nodeRef} "${guardScriptPath}"`,
-          timeout: 3,
-        },
-      ],
-    });
-    writeFileSync(settingsPath, JSON.stringify(hookSettings, null, 2) + "\n", "utf8");
-    synced++;
-  } else if (hasGuardHook) {
-    // 기존 훅 경로를 동기화된 경로로 업데이트
-    let updated = false;
-    for (const entry of hookSettings.hooks.PreToolUse) {
-      if (!Array.isArray(entry.hooks)) continue;
-      for (const h of entry.hooks) {
-        if (typeof h.command === "string" && h.command.includes("headless-guard") && !h.command.includes(guardScriptPath)) {
-          const nodePath = process.execPath.replace(/\\/g, "/");
-          const nodeRef = nodePath.includes(" ") ? `"${nodePath}"` : nodePath;
-          h.command = `${nodeRef} "${guardScriptPath}"`;
-          updated = true;
-        }
-      }
-    }
-    if (updated) {
-      writeFileSync(settingsPath, JSON.stringify(hookSettings, null, 2) + "\n", "utf8");
-      synced++;
-    }
-  }
-} catch {
-  // settings.json 파싱 실패 시 무시 — 기존 설정 보존
-}
+// ── /tmp 임시 파일 자동 정리 (setup 지연 방지: fire-and-forget) ──
+cleanupTmpFiles().catch(() => {});
 
 // ── postinstall 배너 (npm install 시에만 출력) ──
 

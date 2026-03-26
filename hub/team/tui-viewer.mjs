@@ -69,9 +69,22 @@ function checkResultFile(paneName) {
 // ── 메인 폴링 ──
 const POLL_MS = 1000;
 const workerState = new Map(); // paneName → { paneIdx, done }
+let emptyPollCount = 0;
 
 function poll() {
   const panes = listPanes();
+
+  // 세션 사망 감지: 워커 pane이 없는 상태가 지속되면 자동 종료
+  if (!panes.some(p => p.index !== 0)) {
+    emptyPollCount++;
+    const threshold = workerState.size === 0 ? 15 : 10;
+    if (emptyPollCount >= threshold) {
+      tui.close(); clearInterval(timer); clearInterval(doneCheck); process.exit(0);
+    }
+  } else {
+    emptyPollCount = 0;
+  }
+
   // pane 0 = 대시보드 (자기 자신), pane 1+ = 워커
   for (const pane of panes) {
     if (pane.index === 0) continue; // 자기 자신 건너뜀

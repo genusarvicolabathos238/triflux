@@ -10,14 +10,14 @@ export async function teamKill() {
   if (state && isNativeMode(state) && isTeamAlive(state)) {
     await nativeRequest(state, "/stop", {});
     try { process.kill(state.native.supervisorPid, "SIGTERM"); } catch {}
-    clearTeamState();
+    clearTeamState(state.sessionId);
     ok(`종료: ${state.sessionName}`);
     console.log("");
     return;
   }
   if (state && isWtMode(state)) {
     const closed = closeWtSession({ layout: state?.wt?.layout || state?.layout || "1xN", paneCount: state?.wt?.paneCount ?? (state.members || []).length });
-    clearTeamState();
+    clearTeamState(state.sessionId);
     ok(`종료: ${state.sessionName}${closed ? ` (${closed} panes closed)` : ""}`);
     console.log("");
     return;
@@ -32,6 +32,6 @@ export async function teamKill() {
     killSession(session);
     ok(`종료: ${session}`);
   }
-  clearTeamState();
+  clearTeamState(state?.sessionId);
   console.log("");
 }

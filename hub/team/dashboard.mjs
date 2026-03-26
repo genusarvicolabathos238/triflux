@@ -218,14 +218,21 @@ export async function renderDashboard(sessionName, opts = {}) {
   console.log(`${AMBER}└${GRAY}${border}${AMBER}┘${RESET}`);
 }
 
-/** team-state.json 로드 */
+/** team-state.json 로드 (세션별 파일 우선, fallback: team-state.json) */
 async function loadTeamState() {
   try {
-    const { readFileSync } = await import("node:fs");
+    const { existsSync, readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const { homedir } = await import("node:os");
-    const statePath = join(homedir(), ".claude", "cache", "tfx-hub", "team-state.json");
-    return JSON.parse(readFileSync(statePath, "utf8"));
+    const hubDir = join(homedir(), ".claude", "cache", "tfx-hub");
+    const sessionId = process.env.CLAUDE_SESSION_ID;
+    if (sessionId) {
+      const sessionPath = join(hubDir, `team-state-${sessionId}.json`);
+      if (existsSync(sessionPath)) return JSON.parse(readFileSync(sessionPath, "utf8"));
+    }
+    const legacyPath = join(hubDir, "team-state.json");
+    if (existsSync(legacyPath)) return JSON.parse(readFileSync(legacyPath, "utf8"));
+    return {};
   } catch {
     return {};
   }

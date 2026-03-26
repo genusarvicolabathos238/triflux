@@ -24,7 +24,7 @@ export function teamTaskUpdate(args = []) {
     return;
   }
 
-  saveTeamState({ ...state, tasks: updated.tasks });
+  saveTeamState({ ...state, tasks: updated.tasks }, state.sessionId);
   ok(`${updated.target.id} 상태 갱신: ${nextStatus}`);
   console.log("");
 }

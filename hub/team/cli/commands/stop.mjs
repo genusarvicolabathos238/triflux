@@ -26,6 +26,6 @@ export async function teamStop() {
     console.log(`  ${DIM}세션 이미 종료됨${RESET}`);
   }
 
-  clearTeamState();
+  clearTeamState(state.sessionId);
   console.log("");
 }

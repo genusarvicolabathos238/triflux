@@ -86,7 +86,6 @@ function parseRouteCommand(cmd) {
   if (timeoutMatch) flags.timeout = parseInt(timeoutMatch[1], 10);
 
   // 환경변수 기반 글로벌 플래그
-  if (process.env.TFX_DASHBOARD === "1") flags.dashboard = true;
   if (process.env.TFX_VERBOSE === "1") flags.verbose = true;
   if (process.env.TFX_NO_AUTO_ATTACH === "1") flags.noAutoAttach = true;
 
@@ -157,6 +156,15 @@ async function main() {
 
       const parsed = parseRouteCommand(cmd);
       if (parsed) {
+        // P1a: 단일 워커는 headless 변환 건너뛰기 (직접 실행이 523~1173ms 절약)
+        // TFX_FORCE_HEADLESS=1이면 단일이어도 headless 변환 강제
+        if (!process.env.TFX_FORCE_HEADLESS) {
+          const isMultiWorker = /\s--(multi|parallel)\b/.test(cmd);
+          if (!isMultiWorker) {
+            process.exit(0);  // 원본 tfx-route.sh 명령 그대로 통과
+          }
+        }
+
         const safePrompt = parsed.prompt.replace(/'/g, "'\\''");
         const VALID_MCP = new Set(["implement", "analyze", "review", "docs"]);
         const f = parsed.flags || {};
@@ -164,7 +172,7 @@ async function main() {
         // v3: 플래그 빌더 — 하드코딩 제거, 원본 의도 보존
         const parts = ["tfx multi --teammate-mode headless"];
         if (!f.noAutoAttach) parts.push("--auto-attach");
-        if (f.dashboard) parts.push("--dashboard");
+        if (!f.noAutoAttach) parts.push("--dashboard");  // 워커 요약 스플릿이 기본
         if (f.verbose) parts.push("--verbose");
         parts.push(`--assign '${parsed.agent}:${safePrompt}:${parsed.agent}'`);
         if (parsed.mcp && VALID_MCP.has(parsed.mcp)) parts.push(`--mcp-profile ${parsed.mcp}`);
@@ -173,7 +181,7 @@ async function main() {
         const builtCmd = parts.join(" ");
         autoRoute(
           builtCmd,
-          `[headless-guard] auto-route: tfx-route.sh ${parsed.agent} → headless. mcp=${parsed.mcp} dashboard=${!!f.dashboard}`,
+          `[headless-guard] auto-route: tfx-route.sh ${parsed.agent} → headless. mcp=${parsed.mcp} dashboard=${!f.noAutoAttach}`,
         );
       }
       deny(
@@ -183,10 +191,16 @@ async function main() {
     }
   }
 
-  // ── Agent: CLI 워커 래핑 → deny ──
+  // ── Agent: CLI 워커 래핑 → deny (Claude native는 통과) ──
   if (toolName === "Agent") {
-    const combined = `${(toolInput.prompt || "").toLowerCase()} ${(toolInput.description || "").toLowerCase()}`;
+    const subType = (toolInput.subagent_type || "").toLowerCase();
+    // Claude native subagent types → 무조건 통과
+    const NATIVE_TYPES = new Set(["explore", "plan", "general-purpose", ""]);
+    if (NATIVE_TYPES.has(subType)) process.exit(0);
+    // oh-my-claudecode 계열도 통과
+    if (subType.startsWith("oh-my-claudecode:")) process.exit(0);
 
+    const combined = `${(toolInput.prompt || "").toLowerCase()} ${(toolInput.description || "").toLowerCase()}`;
     const cliPatterns = [
       /codex\s+(exec|run|실행)/,
       /gemini\s+(-p|run|실행)/,

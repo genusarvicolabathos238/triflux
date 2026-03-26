@@ -6,7 +6,8 @@
 import { join } from "node:path";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { execSync, execFileSync, spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import {
   createPsmuxSession,
   killPsmuxSession,
@@ -17,7 +18,7 @@ import {
   startCapture,
   psmuxExec,
 } from "./psmux.mjs";
-import { HANDOFF_INSTRUCTION, processHandoff } from "./handoff.mjs";
+import { HANDOFF_INSTRUCTION_SHORT, processHandoff } from "./handoff.mjs";
 
 const RESULT_DIR = join(tmpdir(), "tfx-headless");
 
@@ -30,17 +31,9 @@ const CLI_BRAND = {
 const ANSI_RESET = "\x1b[0m";
 const ANSI_DIM = "\x1b[2m";
 
-/** 에이전트 역할명 → CLI 타입 매핑 (route_agent() 미러) */
-const AGENT_TO_CLI = {
-  executor: "codex", "build-fixer": "codex", debugger: "codex", "deep-executor": "codex",
-  architect: "codex", planner: "codex", critic: "codex", analyst: "codex",
-  "code-reviewer": "codex", "security-reviewer": "codex", "quality-reviewer": "codex",
-  scientist: "codex", "scientist-deep": "codex", "document-specialist": "codex",
-  spark: "codex",
-  designer: "gemini", writer: "gemini",
-  explore: "claude", verifier: "claude", "test-engineer": "claude", "qa-tester": "claude",
-  codex: "codex", gemini: "gemini", claude: "claude",
-};
+/** 에이전트 역할명 → CLI 타입 매핑 (단일 소스: agent-map.json) */
+const _require = createRequire(import.meta.url);
+const AGENT_TO_CLI = _require("./agent-map.json");
 
 /**
  * 에이전트 역할명 또는 CLI 이름을 CLI 타입("codex"|"gemini"|"claude")으로 해석한다.
@@ -68,15 +61,29 @@ const MCP_PROFILE_HINTS = {
  * @param {object} [opts]
  * @param {boolean} [opts.handoff=true]
  * @param {string} [opts.mcp] — MCP 프로필 ("implement"|"analyze"|"review"|"docs")
+ * @param {string} [opts.contextFile] — 컨텍스트 파일 경로 (최대 32KB, UTF-8 안전 절단)
  * @returns {string} PowerShell 명령
  */
 export function buildHeadlessCommand(cli, prompt, resultFile, opts = {}) {
-  const { handoff = true, mcp } = opts;
+  const { handoff = true, mcp, contextFile } = opts;
   const resolvedCli = resolveCliType(cli);
+
+  // contextFile 처리: 32KB(32768 bytes) 초과 시 UTF-8 안전 절단
+  let contextPrefix = "";
+  if (contextFile && existsSync(contextFile)) {
+    let ctx = readFileSync(contextFile, "utf8");
+    if (Buffer.byteLength(ctx, "utf8") > 32768) {
+      ctx = Buffer.from(ctx).subarray(0, 32768).toString("utf8");
+    }
+    if (ctx.length > 0) {
+      contextPrefix = `<prior_context>\n${ctx}\n</prior_context>\n\n`;
+    }
+  }
+
   const mcpHint = mcp && MCP_PROFILE_HINTS[mcp] ? ` [MCP: ${mcp}] ${MCP_PROFILE_HINTS[mcp]}` : "";
-  // HANDOFF 지시는 프롬프트에 삽입하지 않음 — headless 후처리(processHandoff)에서 처리
-  // psmux send-keys 줄바꿈 문제 + codex exec "---" 인자 충돌 방지
-  const fullPrompt = `${prompt}${mcpHint}`;
+  // P2: HANDOFF 지시를 프롬프트에 삽입 (워커가 구조화된 handoff 블록을 출력하도록)
+  const handoffHint = handoff ? `\n\n${HANDOFF_INSTRUCTION_SHORT}` : "";
+  const fullPrompt = `${contextPrefix}${prompt}${mcpHint}${handoffHint}`;
   const escaped = fullPrompt.replace(/'/g, "''");
   const cls = "Clear-Host; ";
 
@@ -106,118 +113,101 @@ function readResult(resultFile, paneId) {
   return capturePsmuxPane(paneId, 30);
 }
 
-/**
- * 헤드리스 CLI 오케스트레이션 실행
- *
- * @param {string} sessionName — psmux 세션 이름
- * @param {Array<{cli: string, prompt: string, role?: string}>} assignments
- * @param {object} [opts]
- * @param {number} [opts.timeoutSec=300] — 각 워커 타임아웃
- * @param {string} [opts.layout='2x2'] — pane 레이아웃
- * @param {(event: object) => void} [opts.onProgress] — 진행 콜백
- * @param {number} [opts.progressIntervalSec=0] — N초마다 progress 이벤트 발화 (0=비활성)
- * @param {boolean} [opts.progressive=true] — true면 pane을 하나씩 split-window로 추가 (실시간 스플릿)
- * @returns {{ sessionName: string, results: Array<{cli: string, paneName: string, matched: boolean, exitCode: number|null, output: string, sessionDead?: boolean}> }}
- */
-export async function runHeadless(sessionName, assignments, opts = {}) {
-  const {
-    timeoutSec = 300,
-    layout = "2x2",
-    onProgress,
-    progressIntervalSec = 0,
-    progressive = true,
-    dashboard = false,
-  } = opts;
+/** progressive 스플릿 모드: lead pane만 생성 후, 워커를 하나씩 추가하며 dispatch */
+async function dispatchProgressive(sessionName, assignments, layout, safeProgress) {
+  const session = createPsmuxSession(sessionName, { layout, paneCount: 1 });
+  applyTrifluxTheme(sessionName);
+  if (safeProgress) safeProgress({ type: "session_created", sessionName, panes: session.panes });
 
-  mkdirSync(RESULT_DIR, { recursive: true });
+  // dashboard: 워커 pane을 먼저 생성한 후 pane 0에 대시보드를 실행
+  // (listPanes로 워커 감지가 가능하려면 워커 pane이 먼저 존재해야 함)
 
-  // onProgress 예외를 삼켜 실행 흐름 보호 (onPoll과 동일 패턴)
-  const safeProgress = onProgress
-    ? (event) => { try { onProgress(event); } catch { /* 콜백 예외 삼킴 */ } }
-    : null;
+  const dispatches = [];
+  for (let i = 0; i < assignments.length; i++) {
+    const assignment = assignments[i];
+    const paneName = `worker-${i + 1}`;
+    const resolvedCli = resolveCliType(assignment.cli);
+    const brand = CLI_BRAND[resolvedCli] || { emoji: "\u{25CF}", label: resolvedCli, ansi: "" };
+    const paneTitle = assignment.role
+      ? `${brand.emoji} ${resolvedCli} (${assignment.role})`
+      : `${brand.emoji} ${resolvedCli}-${i + 1}`;
 
-  let dispatches;
+    let newPaneId;
+    if (i === 0) {
+      // 첫 번째 워커: 빈 lead pane 사용
+      newPaneId = `${sessionName}:0.0`;
+    } else {
+      // 2번째+: split-window로 추가
+      newPaneId = psmuxExec([
+        "split-window", "-t", sessionName, "-P", "-F",
+        "#{session_name}:#{window_index}.#{pane_index}",
+      ]);
+    }
 
-  if (progressive) {
-    // ─── 실시간 스플릿 모드: lead pane만 생성 후, 워커를 하나씩 추가 ───
-    const session = createPsmuxSession(sessionName, { layout, paneCount: 1 });
-    applyTrifluxTheme(sessionName);
-    if (safeProgress) safeProgress({ type: "session_created", sessionName, panes: session.panes });
+    // 타이틀 설정 (이모지 포함)
+    try { psmuxExec(["select-pane", "-t", newPaneId, "-T", paneTitle]); } catch { /* 무시 */ }
 
-    // dashboard: 워커 pane을 먼저 생성한 후 pane 0에 대시보드를 실행
-    // (listPanes로 워커 감지가 가능하려면 워커 pane이 먼저 존재해야 함)
+    if (safeProgress) safeProgress({ type: "worker_added", paneName, cli: assignment.cli, paneTitle });
 
-    dispatches = assignments.map((assignment, i) => {
-      const paneName = `worker-${i + 1}`;
-      const resolvedCli = resolveCliType(assignment.cli);
-      const brand = CLI_BRAND[resolvedCli] || { emoji: "\u{25CF}", label: resolvedCli, ansi: "" };
-      const paneTitle = assignment.role
-        ? `${brand.emoji} ${resolvedCli} (${assignment.role})`
-        : `${brand.emoji} ${resolvedCli}-${i + 1}`;
+    // 캡처 시작 + 컬러 배너 + 명령 dispatch
+    const resultFile = join(RESULT_DIR, `${sessionName}-${paneName}.txt`).replace(/\\/g, "/");
+    const cmd = buildHeadlessCommand(assignment.cli, assignment.prompt, resultFile, { mcp: assignment.mcp });
+    startCapture(sessionName, newPaneId);
+    // pane 간 pipe-pane EBUSY 방지 — 이벤트 루프 해방하며 순차 대기
+    if (i > 0) await new Promise(r => setTimeout(r, 300));
+    const dispatch = dispatchCommand(sessionName, newPaneId, cmd);
 
-      let newPaneId;
-      if (i === 0) {
-        // 첫 번째 워커: 빈 lead pane 사용
-        newPaneId = `${sessionName}:0.0`;
-      } else {
-        // 2번째+: split-window로 추가
-        newPaneId = psmuxExec([
-          "split-window", "-t", sessionName, "-P", "-F",
-          "#{session_name}:#{window_index}.#{pane_index}",
-        ]);
-      }
+    if (safeProgress) safeProgress({ type: "dispatched", paneName, cli: assignment.cli });
 
-      // 타이틀 설정 (이모지 포함)
-      try { psmuxExec(["select-pane", "-t", newPaneId, "-T", paneTitle]); } catch { /* 무시 */ }
-
-      if (safeProgress) safeProgress({ type: "worker_added", paneName, cli: assignment.cli, paneTitle });
-
-      // 캡처 시작 + 컬러 배너 + 명령 dispatch
-      const resultFile = join(RESULT_DIR, `${sessionName}-${paneName}.txt`).replace(/\\/g, "/");
-      const cmd = buildHeadlessCommand(assignment.cli, assignment.prompt, resultFile, { mcp: assignment.mcp });
-      startCapture(sessionName, newPaneId);
-      // pane 간 pipe-pane EBUSY 방지 — capture 스크립트 파일 잠금 해제 대기
-      if (i > 0) { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300); } catch {} }
-      const dispatch = dispatchCommand(sessionName, newPaneId, cmd);
-
-      if (safeProgress) safeProgress({ type: "dispatched", paneName, cli: assignment.cli });
-
-      return { ...dispatch, paneId: newPaneId, paneName, resultFile, cli: assignment.cli, role: assignment.role };
-    });
-
-    // 모든 split 완료 후 레이아웃 한 번만 정렬 (깜빡임 방지)
-    try { psmuxExec(["select-layout", "-t", sessionName, "tiled"]); } catch { /* 무시 */ }
-
-    // v7.1.3: psmux 내부 대시보드 pane 제거 — WT 스플릿에서 tui-viewer 직접 실행
-
-  } else {
-    // ─── 기존 모드: 모든 pane을 한 번에 생성 ───
-    const paneCount = assignments.length + 1;
-    // A2b fix: 2x2 레이아웃은 최대 4 pane — 초과 시 tiled로 자동 전환
-    const effectiveLayout = (layout === "2x2" && paneCount > 4) ? "tiled" : layout;
-    const session = createPsmuxSession(sessionName, { layout: effectiveLayout, paneCount });
-    applyTrifluxTheme(sessionName);
-    if (safeProgress) safeProgress({ type: "session_created", sessionName, panes: session.panes });
-
-    dispatches = assignments.map((assignment, i) => {
-      const paneName = `worker-${i + 1}`;
-      const resultFile = join(RESULT_DIR, `${sessionName}-${paneName}.txt`).replace(/\\/g, "/");
-      const cmd = buildHeadlessCommand(assignment.cli, assignment.prompt, resultFile, { mcp: assignment.mcp });
-      const scriptDir = join(RESULT_DIR, sessionName);
-      const dispatch = dispatchCommand(sessionName, paneName, cmd, { scriptDir, scriptName: paneName });
-
-      // P1 fix: 비-progressive에서는 pane 리네임 금지 — 캡처 로그 경로가 타이틀 기반이므로
-      // 리네임하면 waitForCompletion이 "codex (role).log"를 찾지만 실제는 "worker-N.log"로 불일치
-      // progressive 모드에서는 split-window 시 새 pane에 바로 타이틀이 설정되므로 문제없음
-
-      if (safeProgress) safeProgress({ type: "dispatched", paneName, cli: assignment.cli });
-
-      return { ...dispatch, paneName, resultFile, cli: assignment.cli, role: assignment.role };
-    });
+    dispatches.push({ ...dispatch, paneId: newPaneId, paneName, resultFile, cli: assignment.cli, role: assignment.role });
   }
 
+  // 모든 split 완료 후 레이아웃 한 번만 정렬 (깜빡임 방지)
+  try { psmuxExec(["select-layout", "-t", sessionName, "tiled"]); } catch { /* 무시 */ }
+
+  // v7.1.3: psmux 내부 대시보드 pane 제거 — WT 스플릿에서 tui-viewer 직접 실행
+
+  return dispatches;
+}
+
+/** 기존 batch 모드: 모든 pane을 한 번에 생성하여 dispatch */
+function dispatchBatch(sessionName, assignments, layout, safeProgress) {
+  const paneCount = assignments.length + 1;
+  // A2b fix: 2x2 레이아웃은 최대 4 pane — 초과 시 tiled로 자동 전환
+  const effectiveLayout = (layout === "2x2" && paneCount > 4) ? "tiled" : layout;
+  const session = createPsmuxSession(sessionName, { layout: effectiveLayout, paneCount });
+  applyTrifluxTheme(sessionName);
+  if (safeProgress) safeProgress({ type: "session_created", sessionName, panes: session.panes });
+
+  return assignments.map((assignment, i) => {
+    const paneName = `worker-${i + 1}`;
+    const resultFile = join(RESULT_DIR, `${sessionName}-${paneName}.txt`).replace(/\\/g, "/");
+    const cmd = buildHeadlessCommand(assignment.cli, assignment.prompt, resultFile, { mcp: assignment.mcp });
+    const scriptDir = join(RESULT_DIR, sessionName);
+    const dispatch = dispatchCommand(sessionName, paneName, cmd, { scriptDir, scriptName: paneName });
+
+    // P1 fix: 비-progressive에서는 pane 리네임 금지 — 캡처 로그 경로가 타이틀 기반이므로
+    // 리네임하면 waitForCompletion이 "codex (role).log"를 찾지만 실제는 "worker-N.log"로 불일치
+    // progressive 모드에서는 split-window 시 새 pane에 바로 타이틀이 설정되므로 문제없음
+
+    if (safeProgress) safeProgress({ type: "dispatched", paneName, cli: assignment.cli });
+
+    return { ...dispatch, paneName, resultFile, cli: assignment.cli, role: assignment.role };
+  });
+}
+
+/**
+ * 모든 dispatch를 병렬 대기하며 완료 결과를 수집한다.
+ * @param {string} sessionName
+ * @param {Array} dispatches
+ * @param {number} timeoutSec
+ * @param {Function|null} safeProgress
+ * @param {number} progressIntervalSec
+ * @returns {Promise<Array<{d, completion, output}>>}
+ */
+async function awaitAll(sessionName, dispatches, timeoutSec, safeProgress, progressIntervalSec) {
   // 병렬 대기 (Promise.all — 모든 pane 동시 폴링, 총 시간 = max(개별 시간))
-  const results = await Promise.all(dispatches.map(async (d) => {
+  return Promise.all(dispatches.map(async (d) => {
     // onPoll → onProgress 변환 (throttle by progressIntervalSec)
     const pollOpts = {};
     if (safeProgress && progressIntervalSec > 0) {
@@ -258,7 +248,14 @@ export async function runHeadless(sessionName, assignments, opts = {}) {
 
     return { d, completion, output };
   }));
+}
 
+/**
+ * git diff + handoff 파이프라인을 적용하여 최종 결과 배열을 반환한다.
+ * @param {Array<{d, completion, output}>} results
+ * @returns {Array}
+ */
+function collectResults(results) {
   // B3 fix: git diff를 루프 밖에서 1회만 실행 (워커 수만큼 중복 방지)
   let gitDiffFiles;
   try {
@@ -267,7 +264,7 @@ export async function runHeadless(sessionName, assignments, opts = {}) {
   } catch { /* git 미설치 또는 non-repo — 무시 */ }
 
   // handoff 파이프라인: parse → validate → format (각 워커 결과에 적용)
-  const finalResults = results.map(({ d, completion, output }) => {
+  return results.map(({ d, completion, output }) => {
     const handoffResult = processHandoff(output, {
       exitCode: completion.exitCode,
       resultFile: d.resultFile,
@@ -291,8 +288,45 @@ export async function runHeadless(sessionName, assignments, opts = {}) {
       handoffFallback: handoffResult.fallback,
     };
   });
+}
 
-  return { sessionName, results: finalResults };
+/**
+ * 헤드리스 CLI 오케스트레이션 실행
+ *
+ * @param {string} sessionName — psmux 세션 이름
+ * @param {Array<{cli: string, prompt: string, role?: string}>} assignments
+ * @param {object} [opts]
+ * @param {number} [opts.timeoutSec=300] — 각 워커 타임아웃
+ * @param {string} [opts.layout='2x2'] — pane 레이아웃
+ * @param {(event: object) => void} [opts.onProgress] — 진행 콜백
+ * @param {number} [opts.progressIntervalSec=0] — N초마다 progress 이벤트 발화 (0=비활성)
+ * @param {boolean} [opts.progressive=true] — true면 pane을 하나씩 split-window로 추가 (실시간 스플릿)
+ * @returns {{ sessionName: string, results: Array<{cli: string, paneName: string, matched: boolean, exitCode: number|null, output: string, sessionDead?: boolean}> }}
+ */
+export async function runHeadless(sessionName, assignments, opts = {}) {
+  const {
+    timeoutSec = 300,
+    layout = "2x2",
+    onProgress,
+    progressIntervalSec = 0,
+    progressive = true,
+    dashboard = false,
+  } = opts;
+
+  mkdirSync(RESULT_DIR, { recursive: true });
+
+  // onProgress 예외를 삼켜 실행 흐름 보호 (onPoll과 동일 패턴)
+  const safeProgress = onProgress
+    ? (event) => { try { onProgress(event); } catch { /* 콜백 예외 삼킴 */ } }
+    : null;
+
+  const dispatches = progressive
+    ? await dispatchProgressive(sessionName, assignments, layout, safeProgress)
+    : dispatchBatch(sessionName, assignments, layout, safeProgress);
+
+  const results = await awaitAll(sessionName, dispatches, timeoutSec, safeProgress, progressIntervalSec);
+
+  return { sessionName, results: collectResults(results) };
 }
 
 /**
@@ -401,6 +435,7 @@ export function ensureWtProfile(workerCount = 2) {
         unfocusedAppearance: { opacity: 20 },
         colorScheme: "One Half Dark",
         font: { size: Math.max(6, getWtDefaultFontSize() - 1 - Math.floor(workerCount / 2)) },
+        closeOnExit: "always",
         hidden: true, // 프로필 목록에는 숨김 (triflux에서만 사용)
       };
 
@@ -420,87 +455,28 @@ export function ensureWtProfile(workerCount = 2) {
 // ─── v6.0.0: Lead-Direct Interactive Mode ───
 
 /**
- * Windows Terminal에서 psmux 세션을 자동 attach한다.
- * 별도 창이 열리며 사용자가 실시간으로 CLI 출력을 볼 수 있다.
+ * Windows Terminal에서 psmux 세션을 split-pane으로 자동 attach한다.
+ * WT_SESSION 안에서만 동작하며, 새 탭(nt)은 생성하지 않는다.
  *
  * @param {string} sessionName — attach할 psmux 세션 이름
- * @param {object} [opts]
- * @param {string} [opts.position] — "right" | "left" | 없으면 기본 위치
+ * @param {object} [opts] — 예약 (현재 미사용)
+ * @param {number} [workerCount=2]
  * @returns {boolean} 성공 여부
  */
 export function autoAttachTerminal(sessionName, opts = {}, workerCount = 2) {
-  try {
-    execSync("where wt.exe", { stdio: "ignore" });
-  } catch {
-    return false;
-  }
-
+  if (!process.env.WT_SESSION) return false;
+  try { execSync("where wt.exe", { stdio: "ignore" }); } catch { return false; }
   ensureWtProfile(workerCount);
-
-  const mode = opts.mode || "auto";
-
-  if (mode === "split" && process.env.WT_SESSION) {
-    // inner split — 같은 WT 창에서 가로 분할. psmux를 직접 실행 (pwsh 불필요).
-    try {
-      const child = spawn("wt.exe", [
-        "-w", "0", "sp", "-H", "-s", "0.50",
-        "--profile", "triflux", "--title", "triflux",
-        "--", "psmux", "attach", "-t", sessionName,
-      ], { detached: true, stdio: "ignore" });
-      child.unref();
-      try { spawn("wt.exe", ["-w", "0", "mf", "up"], { detached: true, stdio: "ignore" }).unref(); } catch { /* 무시 */ }
-      return true;
-    } catch { /* fallthrough to window */ }
-  }
-
-  // v6.1.0: 읽기전용 뷰어 + 포커스 복원 + 윈도우 배치
-  const logDir = join(tmpdir(), "psmux-steering", sessionName).replace(/\\/g, "/");
-  const cols = opts.cols || Math.max(100, 60 + workerCount * 15);
-  const rows = opts.rows || Math.max(25, 15 + workerCount * 4);
-
-  // 읽기전용 뷰어 스크립트 생성
-  const viewerScript = join(tmpdir(), "tfx-viewer-" + sessionName + ".ps1").replace(/\\/g, "/");
-  writeFileSync(viewerScript, [
-    "$Host.UI.RawUI.WindowTitle = '" + sessionName + "'",
-    "Write-Host \"`e[38;5;214m⬡ triflux viewer (read-only)`e[0m — " + sessionName + "\"",
-    "Write-Host 'Log: " + logDir + "'",
-    "Write-Host '---'",
-    "for ($i=0; $i -lt 30; $i++) { if ((Get-ChildItem '" + logDir + "' -Filter *.log -ErrorAction SilentlyContinue).Count -gt 0) { break }; Start-Sleep 1 }",
-    "if (-not (Get-ChildItem '" + logDir + "' -Filter *.log -ErrorAction SilentlyContinue)) { Write-Host 'No log files found after 30s'; exit 1 }",
-    "Get-Content -Path '" + logDir + "\\*.log' -Wait -Tail 50",
-  ].join("\n"), "utf8");
-
-  // T1 fix: 현재 HWND를 먼저 저장 → 탭 추가 → 즉시 원래 탭으로 복귀
-  // 2단계 포커스 복원: (1) 탭 추가 전 HWND 캡처 (2) 탭 추가 후 150ms+SendKeys
-  const saveHwndScript = [
-    "Add-Type -AssemblyName System.Windows.Forms",
-    "$before = [System.Windows.Forms.Form]::ActiveForm",
-    // 150ms로 단축 (300ms → 150ms) — WT 탭 생성은 ~100ms
-    "Start-Sleep -Milliseconds 150",
-    "[System.Windows.Forms.SendKeys]::SendWait('^+{TAB}')",
-  ].join("; ");
-
-  // WT new-tab은 --size 미지원 (window-level only). 기존 창(-w 0)에 탭 추가만.
-  const wtArgs = ["-w", "0", "nt", "--profile", "triflux", "--title", sessionName];
-  wtArgs.push("--", "pwsh.exe", "-NoProfile", "-NoLogo", "-File", viewerScript);
-
   try {
-    const child = spawn("wt.exe", wtArgs, { detached: true, stdio: "ignore" });
+    const child = spawn("wt.exe", [
+      "-w", "0", "sp", "-H", "-s", "0.50",
+      "--profile", "triflux", "--title", "triflux",
+      "--", "psmux", "attach", "-t", sessionName,
+    ], { detached: true, stdio: "ignore" });
     child.unref();
-  } catch {
-    return false;
-  }
-
-  // T1: 포커스 복원 (150ms — 기존 300ms에서 단축)
-  for (const shell of ["pwsh.exe", "powershell.exe"]) {
-    try {
-      spawn(shell, ["-NoProfile", "-NonInteractive", "-Command", saveHwndScript], {
-        detached: true, stdio: "ignore",
-      }).unref();
-      break;
-    } catch { /* 다음 shell */ }
-  }
-  return true;
+    try { spawn("wt.exe", ["-w", "0", "mf", "up"], { detached: true, stdio: "ignore" }).unref(); } catch { /* 무시 */ }
+    return true;
+  } catch { return false; }
 }
 
 /**
@@ -598,7 +574,7 @@ export async function runHeadlessInteractive(sessionName, assignments, opts = {}
         // v7.0: psmux attach로 대시보드+워커 전체 세션을 WT 탭에 표시
         attachDashboardTab(sessionName, assignments.length);
       } else {
-        autoAttachTerminal(sessionName, { mode: "window" }, assignments.length);
+        autoAttachTerminal(sessionName, {}, assignments.length);
       }
     }
     if (userOnProgress) userOnProgress(event);

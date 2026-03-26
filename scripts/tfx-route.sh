@@ -567,89 +567,102 @@ capture_workspace_signature() {
 }
 
 # ── 라우팅 테이블 ──
-# 반환: CLI_CMD, CLI_ARGS, CLI_TYPE, CLI_EFFORT, DEFAULT_TIMEOUT, RUN_MODE, OPUS_OVERSIGHT
+# CLI_TYPE/CLI_CMD: agent-map.json 단일 소스. 상세 설정: 아래 case 문.
+# 반환: CLI_TYPE, CLI_CMD, CLI_ARGS, CLI_EFFORT, DEFAULT_TIMEOUT, RUN_MODE, OPUS_OVERSIGHT
 route_agent() {
   local agent="$1"
   local codex_base="--dangerously-bypass-approvals-and-sandbox --skip-git-repo-check"
+  local map_file
+  map_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../hub/team/agent-map.json"
 
+  # ── CLI_TYPE: 단일 소스 (agent-map.json) ──
+  local _raw_type
+  _raw_type=$(node -e "
+    const p=require('path').resolve(process.argv[1]);
+    const m=JSON.parse(require('fs').readFileSync(p,'utf8'));
+    const t=m[process.argv[2]];
+    if(t)process.stdout.write(t);
+  " "$map_file" "$agent" 2>/dev/null)
+
+  if [[ -z "$_raw_type" ]]; then
+    echo "ERROR: 알 수 없는 에이전트 타입: $agent" >&2
+    echo "사용 가능: $(node -e "console.log(Object.keys(JSON.parse(require('fs').readFileSync(require('path').resolve(process.argv[1]),'utf8'))).join(', '))" "$map_file" 2>/dev/null)" >&2
+    exit 1
+  fi
+
+  # "claude" → "claude-native" (headless.mjs는 "claude", route.sh는 "claude-native")
+  CLI_TYPE="$_raw_type"
+  [[ "$CLI_TYPE" == "claude" ]] && CLI_TYPE="claude-native"
+
+  # ── CLI_CMD: CLI_TYPE에서 파생 ──
+  case "$CLI_TYPE" in
+    codex)         CLI_CMD="codex" ;;
+    gemini)        CLI_CMD="gemini" ;;
+    claude-native) CLI_CMD=""; CLI_ARGS="" ;;
+  esac
+
+  # ── 에이전트별 상세 설정 ──
   case "$agent" in
     # ─── 구현 레인 ───
     executor)
-      CLI_TYPE="codex"; CLI_CMD="codex"
       CLI_ARGS="exec ${codex_base}"
       CLI_EFFORT="high"; DEFAULT_TIMEOUT=1080; RUN_MODE="fg"; OPUS_OVERSIGHT="false" ;;
     build-fixer)
-      CLI_TYPE="codex"; CLI_CMD="codex"
       CLI_ARGS="exec --profile fast ${codex_base}"
       CLI_EFFORT="fast"; DEFAULT_TIMEOUT=540; RUN_MODE="fg"; OPUS_OVERSIGHT="false" ;;
     debugger)
-      CLI_TYPE="codex"; CLI_CMD="codex"
       CLI_ARGS="exec ${codex_base}"
       CLI_EFFORT="high"; DEFAULT_TIMEOUT=900; RUN_MODE="bg"; OPUS_OVERSIGHT="false" ;;
     deep-executor)
-      CLI_TYPE="codex"; CLI_CMD="codex"
       CLI_ARGS="exec --profile xhigh ${codex_base}"
       CLI_EFFORT="xhigh"; DEFAULT_TIMEOUT=3600; RUN_MODE="bg"; OPUS_OVERSIGHT="true" ;;
 
     # ─── 설계/분석 레인 ───
     architect)
-      CLI_TYPE="codex"; CLI_CMD="codex"
       CLI_ARGS="exec --profile xhigh ${codex_base}"
       CLI_EFFORT="xhigh"; DEFAULT_TIMEOUT=3600; RUN_MODE="bg"; OPUS_OVERSIGHT="true" ;;
     planner)
-      CLI_TYPE="codex"; CLI_CMD="codex"
       CLI_ARGS="exec --profile xhigh ${codex_base}"
       CLI_EFFORT="xhigh"; DEFAULT_TIMEOUT=3600; RUN_MODE="fg"; OPUS_OVERSIGHT="true" ;;
     critic)
-      CLI_TYPE="codex"; CLI_CMD="codex"
       CLI_ARGS="exec --profile xhigh ${codex_base}"
       CLI_EFFORT="xhigh"; DEFAULT_TIMEOUT=3600; RUN_MODE="bg"; OPUS_OVERSIGHT="true" ;;
     analyst)
-      CLI_TYPE="codex"; CLI_CMD="codex"
       CLI_ARGS="exec --profile xhigh ${codex_base}"
       CLI_EFFORT="xhigh"; DEFAULT_TIMEOUT=3600; RUN_MODE="fg"; OPUS_OVERSIGHT="true" ;;
 
     # ─── 리뷰 레인 ───
     code-reviewer)
-      CLI_TYPE="codex"; CLI_CMD="codex"
       CLI_ARGS="exec --profile thorough ${codex_base} review"
       CLI_EFFORT="thorough"; DEFAULT_TIMEOUT=1800; RUN_MODE="bg"; OPUS_OVERSIGHT="false" ;;
     security-reviewer)
-      CLI_TYPE="codex"; CLI_CMD="codex"
       CLI_ARGS="exec --profile thorough ${codex_base} review"
       CLI_EFFORT="thorough"; DEFAULT_TIMEOUT=1800; RUN_MODE="bg"; OPUS_OVERSIGHT="true" ;;
     quality-reviewer)
-      CLI_TYPE="codex"; CLI_CMD="codex"
       CLI_ARGS="exec --profile thorough ${codex_base} review"
       CLI_EFFORT="thorough"; DEFAULT_TIMEOUT=1800; RUN_MODE="bg"; OPUS_OVERSIGHT="false" ;;
 
     # ─── 리서치 레인 ───
     scientist)
-      CLI_TYPE="codex"; CLI_CMD="codex"
       CLI_ARGS="exec ${codex_base}"
       CLI_EFFORT="high"; DEFAULT_TIMEOUT=1440; RUN_MODE="bg"; OPUS_OVERSIGHT="false" ;;
     scientist-deep)
-      CLI_TYPE="codex"; CLI_CMD="codex"
       CLI_ARGS="exec --profile thorough ${codex_base}"
       CLI_EFFORT="thorough"; DEFAULT_TIMEOUT=3600; RUN_MODE="bg"; OPUS_OVERSIGHT="false" ;;
     document-specialist)
-      CLI_TYPE="codex"; CLI_CMD="codex"
       CLI_ARGS="exec ${codex_base}"
       CLI_EFFORT="high"; DEFAULT_TIMEOUT=1440; RUN_MODE="bg"; OPUS_OVERSIGHT="false" ;;
 
     # ─── UI/문서 레인 ───
     designer)
-      CLI_TYPE="gemini"; CLI_CMD="gemini"
       CLI_ARGS="-m gemini-3.1-pro-preview -y --prompt"
       CLI_EFFORT="pro"; DEFAULT_TIMEOUT=900; RUN_MODE="bg"; OPUS_OVERSIGHT="false" ;;
     writer)
-      CLI_TYPE="gemini"; CLI_CMD="gemini"
       CLI_ARGS="-m gemini-3-flash-preview -y --prompt"
       CLI_EFFORT="flash"; DEFAULT_TIMEOUT=900; RUN_MODE="bg"; OPUS_OVERSIGHT="false" ;;
 
     # ─── 탐색/검증/테스트 (Claude-native 우선, TFX_NO_CLAUDE_NATIVE=1일 때만 Codex 리매핑) ───
     explore|verifier|test-engineer|qa-tester)
-      CLI_TYPE="claude-native"; CLI_CMD=""; CLI_ARGS=""
       CLI_EFFORT="n/a"; DEFAULT_TIMEOUT=600; RUN_MODE="fg"; OPUS_OVERSIGHT="false"
       case "$agent" in
         test-engineer|qa-tester) DEFAULT_TIMEOUT=1200; RUN_MODE="bg" ;;
@@ -658,28 +671,29 @@ route_agent() {
 
     # ─── 경량 ───
     spark)
-      CLI_TYPE="codex"; CLI_CMD="codex"
       CLI_ARGS="exec --profile spark_fast ${codex_base}"
       CLI_EFFORT="spark_fast"; DEFAULT_TIMEOUT=180; RUN_MODE="fg"; OPUS_OVERSIGHT="false" ;;
     # ─── CLI 이름 alias (사용자 편의) ───
     codex)
-      CLI_TYPE="codex"; CLI_CMD="codex"
       CLI_ARGS="exec ${codex_base}"
       CLI_EFFORT="high"; DEFAULT_TIMEOUT=1080; RUN_MODE="fg"; OPUS_OVERSIGHT="false" ;;
     gemini)
-      CLI_TYPE="gemini"; CLI_CMD="gemini"
       CLI_ARGS="-m gemini-3.1-pro-preview -y --prompt"
       CLI_EFFORT="pro"; DEFAULT_TIMEOUT=900; RUN_MODE="bg"; OPUS_OVERSIGHT="false" ;;
     claude)
-      CLI_TYPE="claude-native"; CLI_CMD=""; CLI_ARGS=""
       CLI_EFFORT="n/a"; DEFAULT_TIMEOUT=600; RUN_MODE="fg"; OPUS_OVERSIGHT="false" ;;
+    # ─── agent-map.json에만 정의된 신규 에이전트 (CLI_TYPE별 기본값) ───
     *)
-      echo "ERROR: 알 수 없는 에이전트 타입: $agent" >&2
-      echo "사용 가능: executor, build-fixer, debugger, deep-executor, architect, planner, critic, analyst," >&2
-      echo "          code-reviewer, security-reviewer, quality-reviewer, scientist, document-specialist," >&2
-      echo "          designer, writer, explore, verifier, test-engineer, qa-tester, spark," >&2
-      echo "          codex, gemini, claude (CLI alias)" >&2
-      exit 1 ;;
+      case "$CLI_TYPE" in
+        codex)
+          CLI_ARGS="exec ${codex_base}"
+          CLI_EFFORT="high"; DEFAULT_TIMEOUT=1080; RUN_MODE="fg"; OPUS_OVERSIGHT="false" ;;
+        gemini)
+          CLI_ARGS="-m gemini-3.1-pro-preview -y --prompt"
+          CLI_EFFORT="pro"; DEFAULT_TIMEOUT=900; RUN_MODE="bg"; OPUS_OVERSIGHT="false" ;;
+        claude-native)
+          CLI_EFFORT="n/a"; DEFAULT_TIMEOUT=600; RUN_MODE="fg"; OPUS_OVERSIGHT="false" ;;
+      esac ;;
   esac
 }
 
@@ -874,7 +888,6 @@ apply_verifier_override() {
       ;;
     claude)
       ORIGINAL_AGENT="${ORIGINAL_AGENT:-$AGENT_TYPE}"
-      CLI_TYPE="claude-native"; CLI_CMD=""; CLI_ARGS=""
       CLI_EFFORT="n/a"; DEFAULT_TIMEOUT=1200; RUN_MODE="fg"; OPUS_OVERSIGHT="false"
       echo "[tfx-route] TFX_VERIFIER_OVERRIDE=claude: verifier -> claude-native" >&2
       ;;

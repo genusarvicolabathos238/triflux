@@ -73,6 +73,9 @@ export async function startHeadlessTeam({ sessionId, task, lead, agents, subtask
     }
   }
 
+  // dashboard 모드: tui-viewer가 최종 상태를 캡처할 시간 확보
+  if (dashboard) await new Promise(r => setTimeout(r, 2000));
+
   // 세션 정리
   handle.kill();
 
@@ -95,7 +98,7 @@ export async function startHeadlessTeam({ sessionId, task, lead, agents, subtask
     tasks: buildTasks(assignments.map(a => a.prompt), members.filter((m) => m.role === "worker")),
     postSave() {
       // headless는 실행 완료 후 즉시 정리 — HUD에 잔존 방지
-      clearTeamState();
+      clearTeamState(sessionId);
       console.log(`\n  ${DIM}세션 정리 완료.${RESET}\n`);
     },
   };

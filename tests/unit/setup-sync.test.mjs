@@ -86,6 +86,11 @@ describe('setup-sync: SYNC_MAP', () => {
       assert.ok(typeof entry.label === 'string', `label must be string: ${JSON.stringify(entry)}`);
     }
   });
+
+  it('headless-guard-fast.sh가 SYNC_MAP에 포함되어 있다', () => {
+    const hasFastSh = SYNC_MAP.some(e => e.label === 'headless-guard-fast.sh');
+    assert.ok(hasFastSh, 'SYNC_MAP must include headless-guard-fast.sh');
+  });
 });
 
 describe('setup-sync: dry-run 실행', () => {

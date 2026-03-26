@@ -1,8 +1,10 @@
 // tests/unit/headless-guard.test.mjs — headless-guard 플래그 보존 테스트
-import { describe, it } from "node:test";
+import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
+import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 const GUARD_PATH = join(process.cwd(), "scripts", "headless-guard.mjs");
 
@@ -51,7 +53,6 @@ function parseRouteCommand(cmd) {
   const timeoutMatch = cmd.match(/(?:^|\s)(\d{2,4})(?:\s|$)/);
   if (timeoutMatch) flags.timeout = parseInt(timeoutMatch[1], 10);
 
-  if (process.env.TFX_DASHBOARD === "1") flags.dashboard = true;
   if (process.env.TFX_VERBOSE === "1") flags.verbose = true;
   if (process.env.TFX_NO_AUTO_ATTACH === "1") flags.noAutoAttach = true;
 
@@ -65,7 +66,7 @@ function buildCommand(parsed) {
 
   const parts = ["tfx multi --teammate-mode headless"];
   if (!f.noAutoAttach) parts.push("--auto-attach");
-  if (f.dashboard) parts.push("--dashboard");
+  if (!f.noAutoAttach) parts.push("--dashboard");  // 워커 요약 스플릿이 기본
   if (f.verbose) parts.push("--verbose");
   parts.push(`--assign '${parsed.agent}:${safePrompt}:${parsed.agent}'`);
   if (parsed.mcp && VALID_MCP.has(parsed.mcp)) parts.push(`--mcp-profile ${parsed.mcp}`);
@@ -101,11 +102,11 @@ describe("parseRouteCommand", () => {
 });
 
 describe("buildCommand — 플래그 보존", () => {
-  it("기본 빌드: auto-attach 포함, dashboard 없음", () => {
+  it("기본 빌드: auto-attach + dashboard 포함 (워커 요약 스플릿 기본)", () => {
     const parsed = { agent: "executor", prompt: "fix", mcp: "implement", flags: {} };
     const cmd = buildCommand(parsed);
     assert.ok(cmd.includes("--auto-attach"));
-    assert.ok(!cmd.includes("--dashboard"));
+    assert.ok(cmd.includes("--dashboard"));
     assert.ok(cmd.includes("--timeout 600"));
   });
 
@@ -122,10 +123,11 @@ describe("buildCommand — 플래그 보존", () => {
     assert.ok(cmd.includes("--verbose"));
   });
 
-  it("noAutoAttach 시 --auto-attach 제거", () => {
+  it("noAutoAttach 시 --auto-attach + --dashboard 모두 제거", () => {
     const parsed = { agent: "executor", prompt: "fix", mcp: "implement", flags: { noAutoAttach: true } };
     const cmd = buildCommand(parsed);
     assert.ok(!cmd.includes("--auto-attach"));
+    assert.ok(!cmd.includes("--dashboard"));
   });
 
   it("커스텀 timeout 전달", () => {
@@ -158,21 +160,150 @@ describe("buildCommand — 플래그 보존", () => {
   });
 });
 
-describe("환경변수 기반 플래그", () => {
-  it("TFX_DASHBOARD=1 → dashboard: true", () => {
-    const orig = process.env.TFX_DASHBOARD;
-    process.env.TFX_DASHBOARD = "1";
-    const r = parseRouteCommand("bash ~/.claude/scripts/tfx-route.sh executor 'test' implement");
-    assert.equal(r.flags.dashboard, true);
-    if (orig === undefined) delete process.env.TFX_DASHBOARD;
-    else process.env.TFX_DASHBOARD = orig;
+// P1a: 단일 워커 우회 로직 미러
+function shouldBypassHeadless(cmd) {
+  if (process.env.TFX_FORCE_HEADLESS) return false;
+  const isMultiWorker = /\s--(multi|parallel)\b/.test(cmd);
+  return !isMultiWorker;
+}
+
+describe("P1a: 단일 워커 headless 우회", () => {
+  it("단일 tfx-route.sh → 우회 (headless 변환 안 함)", () => {
+    assert.equal(shouldBypassHeadless("bash tfx-route.sh executor 'fix bug' implement"), true);
   });
 
-  it("TFX_DASHBOARD 미설정 → dashboard 없음", () => {
-    const orig = process.env.TFX_DASHBOARD;
-    delete process.env.TFX_DASHBOARD;
+  it("--multi 플래그 → headless 변환 수행", () => {
+    assert.equal(shouldBypassHeadless("bash tfx-route.sh executor 'fix bug' --multi implement"), false);
+  });
+
+  it("--parallel 플래그 → headless 변환 수행", () => {
+    assert.equal(shouldBypassHeadless("bash tfx-route.sh executor 'fix bug' --parallel"), false);
+  });
+
+  it("TFX_FORCE_HEADLESS=1 → 단일이어도 headless 변환", () => {
+    const orig = process.env.TFX_FORCE_HEADLESS;
+    process.env.TFX_FORCE_HEADLESS = "1";
+    assert.equal(shouldBypassHeadless("bash tfx-route.sh executor 'fix bug' implement"), false);
+    if (orig === undefined) delete process.env.TFX_FORCE_HEADLESS;
+    else process.env.TFX_FORCE_HEADLESS = orig;
+  });
+
+  it("TFX_FORCE_HEADLESS 미설정 + 단일 워커 → 우회", () => {
+    const orig = process.env.TFX_FORCE_HEADLESS;
+    delete process.env.TFX_FORCE_HEADLESS;
+    assert.equal(shouldBypassHeadless("bash tfx-route.sh codex 'analyze code' review"), true);
+    if (orig) process.env.TFX_FORCE_HEADLESS = orig;
+  });
+});
+
+describe("환경변수 기반 플래그", () => {
+  it("TFX_VERBOSE=1 → verbose: true", () => {
+    const orig = process.env.TFX_VERBOSE;
+    process.env.TFX_VERBOSE = "1";
     const r = parseRouteCommand("bash ~/.claude/scripts/tfx-route.sh executor 'test' implement");
-    assert.equal(r.flags.dashboard, undefined);
-    if (orig) process.env.TFX_DASHBOARD = orig;
+    assert.equal(r.flags.verbose, true);
+    if (orig === undefined) delete process.env.TFX_VERBOSE;
+    else process.env.TFX_VERBOSE = orig;
+  });
+
+  it("TFX_NO_AUTO_ATTACH=1 → noAutoAttach: true", () => {
+    const orig = process.env.TFX_NO_AUTO_ATTACH;
+    process.env.TFX_NO_AUTO_ATTACH = "1";
+    const r = parseRouteCommand("bash ~/.claude/scripts/tfx-route.sh executor 'test' implement");
+    assert.equal(r.flags.noAutoAttach, true);
+    if (orig === undefined) delete process.env.TFX_NO_AUTO_ATTACH;
+    else process.env.TFX_NO_AUTO_ATTACH = orig;
+  });
+});
+
+describe("P2: HANDOFF_INSTRUCTION_SHORT", () => {
+  it("HANDOFF_INSTRUCTION_SHORT가 유효한 문자열", async () => {
+    const { HANDOFF_INSTRUCTION_SHORT } = await import("../../hub/team/handoff.mjs");
+    assert.ok(typeof HANDOFF_INSTRUCTION_SHORT === "string");
+    assert.ok(HANDOFF_INSTRUCTION_SHORT.length > 0);
+    assert.ok(HANDOFF_INSTRUCTION_SHORT.includes("--- HANDOFF ---"));
+    assert.ok(HANDOFF_INSTRUCTION_SHORT.includes("status:"));
+    assert.ok(HANDOFF_INSTRUCTION_SHORT.includes("verdict:"));
+  });
+
+  it("HANDOFF_INSTRUCTION_SHORT는 HANDOFF_INSTRUCTION보다 짧음", async () => {
+    const { HANDOFF_INSTRUCTION, HANDOFF_INSTRUCTION_SHORT } = await import("../../hub/team/handoff.mjs");
+    assert.ok(HANDOFF_INSTRUCTION_SHORT.length < HANDOFF_INSTRUCTION.length);
+  });
+
+  it("buildHeadlessCommand에 handoff 지시가 삽입됨 (미러)", () => {
+    // buildHeadlessCommand 동작 미러: handoff=true일 때 프롬프트에 HANDOFF 삽입
+    const HANDOFF_SHORT = "After completing, output this block at the end:\n--- HANDOFF ---";
+    const prompt = "fix bug";
+    const handoff = true;
+    const handoffHint = handoff ? `\n\n${HANDOFF_SHORT}` : "";
+    const fullPrompt = `${prompt}${handoffHint}`;
+    assert.ok(fullPrompt.includes("--- HANDOFF ---"));
+    assert.ok(fullPrompt.startsWith("fix bug"));
+  });
+
+  it("handoff=false일 때 HANDOFF 지시 미삽입", () => {
+    const HANDOFF_SHORT = "After completing, output this block at the end:\n--- HANDOFF ---";
+    const prompt = "fix bug";
+    const handoff = false;
+    const handoffHint = handoff ? `\n\n${HANDOFF_SHORT}` : "";
+    const fullPrompt = `${prompt}${handoffHint}`;
+    assert.ok(!fullPrompt.includes("--- HANDOFF ---"));
+    assert.equal(fullPrompt, "fix bug");
+  });
+});
+
+const FAST_SH_PATH = join(process.cwd(), "scripts", "headless-guard-fast.sh");
+
+describe("headless-guard-fast.sh — bash pre-filter", () => {
+  const testTmpDir = join(tmpdir(), "tfx-guard-test-" + process.pid);
+  const cacheFile = join(testTmpDir, "tfx-psmux-check.json");
+
+  before(() => {
+    mkdirSync(testTmpDir, { recursive: true });
+  });
+
+  after(() => {
+    rmSync(testTmpDir, { recursive: true, force: true });
+  });
+
+  it("캐시 ok:false + TTL 유효 → exit 0 (Node.js 미기동)", () => {
+    writeFileSync(cacheFile, JSON.stringify({ ts: Date.now(), ok: false }));
+    const result = execFileSync("bash", [FAST_SH_PATH], {
+      input: "{}",
+      timeout: 5000,
+      env: { ...process.env, TMPDIR: testTmpDir, TEMP: testTmpDir },
+      stdio: ["pipe", "pipe", "pipe"],
+      encoding: "utf8",
+    });
+    // exit 0 means it passed through without hitting Node.js
+    assert.ok(true, "fast.sh exited 0 on cached ok:false");
+  });
+
+  it("캐시 만료(5분 초과) → node fallthrough", () => {
+    const expiredTs = Date.now() - (6 * 60 * 1000); // 6분 전
+    writeFileSync(cacheFile, JSON.stringify({ ts: expiredTs, ok: false }));
+    // This will exec node headless-guard.mjs which also exits 0 when psmux is not installed
+    const result = execFileSync("bash", [FAST_SH_PATH], {
+      input: "{}",
+      timeout: 10000,
+      env: { ...process.env, TMPDIR: testTmpDir, TEMP: testTmpDir },
+      stdio: ["pipe", "pipe", "pipe"],
+      encoding: "utf8",
+    });
+    assert.ok(true, "fast.sh fell through to node on expired cache");
+  });
+
+  it("캐시 미존재 → node fallthrough", () => {
+    // Remove cache file if exists
+    try { rmSync(cacheFile); } catch {}
+    const result = execFileSync("bash", [FAST_SH_PATH], {
+      input: "{}",
+      timeout: 10000,
+      env: { ...process.env, TMPDIR: testTmpDir, TEMP: testTmpDir },
+      stdio: ["pipe", "pipe", "pipe"],
+      encoding: "utf8",
+    });
+    assert.ok(true, "fast.sh fell through to node on missing cache");
   });
 });

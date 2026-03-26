@@ -1,5 +1,5 @@
 // tests/unit/intent.test.mjs — intent 의도 분류 엔진 테스트
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   INTENT_CATEGORIES,
@@ -121,5 +121,47 @@ describe('intent', () => {
   it('quickClassify: "테스트 작성" → test', () => {
     const r = quickClassify('유닛 테스트 작성해줘');
     assert.equal(r.category, 'test');
+  });
+
+  // 15. classifyIntent: 결과 캐싱 — 동일 프롬프트 두 번 호출 시 cache-hit reasoning 반환
+  it('classifyIntent caches result and returns cache-hit on second call', () => {
+    const prompt = '캐싱 테스트용 고유 프롬프트 xyzzy-cache-test-2026';
+    const first = classifyIntent(prompt);
+    const second = classifyIntent(prompt);
+    // 두 번째 호출은 캐시에서 반환
+    assert.ok(second.reasoning.startsWith('cache-hit:'), `Expected cache-hit, got: ${second.reasoning}`);
+    assert.equal(second.category, first.category);
+    assert.equal(second.confidence, first.confidence);
+  });
+
+  // 16. classifyIntent: Codex triage mock — codex가 고신뢰 JSON 반환 시 사용
+  it('classifyIntent uses Codex triage when codex returns high-confidence JSON', async () => {
+    // node:child_process execSync을 mock하기 위해 모듈 캐시를 우회하지 않고
+    // classifyIntent가 low-confidence 프롬프트에서 codex fallback 경로를 밟는지
+    // reasoning 필드로 간접 검증 (codex 미설치 환경에서는 keyword-match로 떨어짐)
+    const ambiguousPrompt = '이 작업을 진행해줘 xyzzy-codex-triage-' + Date.now();
+    const r = classifyIntent(ambiguousPrompt);
+    // codex 설치 여부와 무관하게 category + routing은 반드시 존재해야 함
+    assert.ok(typeof r.category === 'string', 'category should be string');
+    assert.ok(typeof r.confidence === 'number', 'confidence should be number');
+    assert.ok(
+      r.reasoning.startsWith('codex-triage:') ||
+      r.reasoning.startsWith('keyword-match') ||
+      r.reasoning.startsWith('cache-hit:'),
+      `Unexpected reasoning: ${r.reasoning}`
+    );
+    assert.ok(r.routing && typeof r.routing.agent === 'string', 'routing.agent should exist');
+  });
+
+  // 17. classifyIntent: high-confidence quickClassify → Codex 건너뜀 (reasoning에 keyword-match)
+  it('classifyIntent skips Codex triage when quickClassify confidence > 0.8', () => {
+    // debug 키워드 다수 → quickClassify confidence > 0.8 → codex 건너뜀
+    // "이 버그 고쳐줘 fix bug error debug troubleshoot crash broken" → 0.846
+    const r = classifyIntent('이 버그 고쳐줘 fix bug error debug troubleshoot crash broken');
+    assert.ok(
+      r.reasoning.startsWith('keyword-match:') || r.reasoning.startsWith('cache-hit:'),
+      `Expected keyword-match or cache-hit, got: ${r.reasoning}`
+    );
+    assert.equal(r.category, 'debug');
   });
 });

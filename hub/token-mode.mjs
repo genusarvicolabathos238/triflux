@@ -20,38 +20,104 @@ export const COMPACT_RULES = [
   { from: ['pending', '대기'],                      to: '⏸',  type: 'symbol' },
 
   // ── 약어 (긴 매칭 우선 정렬) ──
-  { from: ['configuration', '설정'],                to: 'cfg',   type: 'abbrev' },
-  { from: ['implementation', '구현'],               to: 'impl',  type: 'abbrev' },
-  { from: ['architecture', '아키텍처'],             to: 'arch',  type: 'abbrev' },
-  { from: ['dependency', '의존성'],                 to: 'dep',   type: 'abbrev' },
-  { from: ['function', '함수'],                     to: 'fn',    type: 'abbrev' },
-  { from: ['parameter', '파라미터'],                to: 'param', type: 'abbrev' },
-  { from: ['repository', '저장소'],                 to: 'repo',  type: 'abbrev' },
-  { from: ['environment', '환경'],                  to: 'env',   type: 'abbrev' },
-  { from: ['variable', '변수'],                     to: 'var',   type: 'abbrev' },
-  { from: ['directory', '디렉토리'],                to: 'dir',   type: 'abbrev' },
+  { from: ['configuration', '설정'],                to: 'cfg',    type: 'abbrev' },
+  { from: ['implementation', '구현'],               to: 'impl',   type: 'abbrev' },
+  { from: ['architecture', '아키텍처'],             to: 'arch',   type: 'abbrev' },
+  { from: ['dependency', '의존성'],                 to: 'dep',    type: 'abbrev' },
+  { from: ['function', '함수'],                     to: 'fn',     type: 'abbrev' },
+  { from: ['parameter', '파라미터'],                to: 'param',  type: 'abbrev' },
+  { from: ['repository', '저장소'],                 to: 'repo',   type: 'abbrev' },
+  { from: ['environment', '환경'],                  to: 'env',    type: 'abbrev' },
+  { from: ['variable', '변수'],                     to: 'var',    type: 'abbrev' },
+  { from: ['directory', '디렉토리'],                to: 'dir',    type: 'abbrev' },
+
+  // ── 한국어 동사/명령형 약어 ──
+  { from: ['구현해'],   to: 'impl',    type: 'abbrev' },
+  { from: ['확인해'],   to: 'check',   type: 'abbrev' },
+  { from: ['수정해'],   to: 'fix',     type: 'abbrev' },
+  { from: ['테스트'],   to: 'test',    type: 'abbrev' },
+  { from: ['리뷰'],     to: 'review',  type: 'abbrev' },
+  { from: ['분석'],     to: 'analyze', type: 'abbrev' },
+  { from: ['설계'],     to: 'design',  type: 'abbrev' },
+  { from: ['문서화'],   to: 'docs',    type: 'abbrev' },
 ];
 
-// ── 내부: 정렬된 치환 쌍 빌드 (가장 긴 매칭 우선) ──
+/** @type {Array<{ from: string[], to: string, type: 'symbol'|'abbrev' }>} */
+export const REVIEW_RULES = [
+  { from: ['looks good to me', 'lgtm'],    to: '✓lgtm',   type: 'abbrev' },
+  { from: ['needs changes', '수정 필요'],  to: '✗chg',    type: 'abbrev' },
+  { from: ['nitpick', '사소한'],           to: 'nit',     type: 'abbrev' },
+  { from: ['blocking', '블로킹'],          to: 'blk',     type: 'abbrev' },
+  { from: ['suggestion', '제안'],          to: 'sug',     type: 'abbrev' },
+  { from: ['question', '질문'],            to: 'q',       type: 'abbrev' },
+  { from: ['approved', '승인'],            to: '✓apv',    type: 'abbrev' },
+  { from: ['request changes', '변경 요청'], to: '✗req',   type: 'abbrev' },
+];
 
-/** @type {Array<{ pattern: RegExp, to: string }>} */
-const _compactPairs = [];
+/** @type {Array<{ from: string[], to: string, type: 'symbol'|'abbrev' }>} */
+export const DESIGN_RULES = [
+  { from: ['component', '컴포넌트'],       to: 'cmp',     type: 'abbrev' },
+  { from: ['interface', '인터페이스'],     to: 'iface',   type: 'abbrev' },
+  { from: ['abstraction', '추상화'],       to: 'abs',     type: 'abbrev' },
+  { from: ['pattern', '패턴'],             to: 'ptn',     type: 'abbrev' },
+  { from: ['dependency injection', '의존성 주입'], to: 'di', type: 'abbrev' },
+  { from: ['single responsibility', '단일 책임'],  to: 'srp', type: 'abbrev' },
+  { from: ['open closed', '개방 폐쇄'],    to: 'ocp',     type: 'abbrev' },
+  { from: ['inheritance', '상속'],         to: 'inh',     type: 'abbrev' },
+];
 
-for (const rule of COMPACT_RULES) {
-  for (const keyword of rule.from) {
-    _compactPairs.push({ pattern: keyword, to: rule.to, len: keyword.length });
+/** @type {Array<{ from: string[], to: string, type: 'symbol'|'abbrev' }>} */
+export const DOCS_RULES = [
+  { from: ['description', '설명'],         to: 'desc',    type: 'abbrev' },
+  { from: ['example', '예시'],             to: 'ex',      type: 'abbrev' },
+  { from: ['reference', '참조'],           to: 'ref',     type: 'abbrev' },
+  { from: ['introduction', '소개'],        to: 'intro',   type: 'abbrev' },
+  { from: ['deprecated', '사용 중단'],     to: 'dep',     type: 'abbrev' },
+  { from: ['optional', '선택적'],          to: 'opt',     type: 'abbrev' },
+  { from: ['required', '필수'],            to: 'req',     type: 'abbrev' },
+  { from: ['returns', '반환'],             to: 'ret',     type: 'abbrev' },
+];
+
+// ── 프로필 맵 ──
+
+/** @type {Record<string, Array<{ from: string[], to: string, type: 'symbol'|'abbrev' }>>} */
+const PROFILE_MAP = {
+  default: COMPACT_RULES,
+  review:  [...COMPACT_RULES, ...REVIEW_RULES],
+  design:  [...COMPACT_RULES, ...DESIGN_RULES],
+  docs:    [...COMPACT_RULES, ...DOCS_RULES],
+};
+
+// ── 내부: 정렬된 치환 쌍 빌드 헬퍼 ──
+
+/**
+ * 규칙 배열로부터 패턴 쌍을 빌드하고 긴 패턴 우선 정렬
+ * @param {Array<{ from: string[], to: string }>} rules
+ * @returns {Array<{ pattern: string, to: string, len: number }>}
+ */
+function buildCompactPairs(rules) {
+  const pairs = [];
+  for (const rule of rules) {
+    for (const keyword of rule.from) {
+      pairs.push({ pattern: keyword, to: rule.to, len: keyword.length });
+    }
   }
+  pairs.sort((a, b) => b.len - a.len);
+  return pairs;
 }
-// greedy: 긴 패턴 먼저
-_compactPairs.sort((a, b) => b.len - a.len);
 
-/** @type {Array<{ pattern: RegExp, to: string }>} */
-const _expandPairs = [];
-
-for (const rule of COMPACT_RULES) {
-  // expand 시 첫 번째 from 값(영어 우선)으로 복원
-  _expandPairs.push({ symbol: rule.to, restore: rule.from[0] });
+/**
+ * 규칙 배열로부터 확장 쌍을 빌드
+ * @param {Array<{ from: string[], to: string }>} rules
+ * @returns {Array<{ symbol: string, restore: string }>}
+ */
+function buildExpandPairs(rules) {
+  return rules.map((rule) => ({ symbol: rule.to, restore: rule.from[0] }));
 }
+
+// 기본 프로필 쌍 (기존 동작 유지)
+const _compactPairs = buildCompactPairs(COMPACT_RULES);
+const _expandPairs = buildExpandPairs(COMPACT_RULES);
 
 // ── 코드 블록 보호 유틸 ──
 
@@ -106,6 +172,29 @@ export function compactify(text) {
   return withCodeProtection(text, (segment) => {
     let result = segment;
     for (const { pattern, to } of _compactPairs) {
+      const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(escaped, 'gi');
+      result = result.replace(re, to);
+    }
+    return result;
+  });
+}
+
+/**
+ * 텍스트를 compact 모드로 변환 (도메인 프로필 선택 가능)
+ * @param {string} text
+ * @param {'default'|'review'|'design'|'docs'} [profile='default'] — 도메인 프로필
+ * @returns {string}
+ */
+export function applyCompactRules(text, profile = 'default') {
+  if (!text || typeof text !== 'string') return text ?? '';
+
+  const rules = PROFILE_MAP[profile] ?? COMPACT_RULES;
+  const pairs = buildCompactPairs(rules);
+
+  return withCodeProtection(text, (segment) => {
+    let result = segment;
+    for (const { pattern, to } of pairs) {
       const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const re = new RegExp(escaped, 'gi');
       result = result.replace(re, to);

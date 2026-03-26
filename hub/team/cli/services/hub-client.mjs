@@ -126,6 +126,43 @@ export async function startHubDaemon() {
   return null;
 }
 
+/**
+ * Hub가 살아있는지 확인하고, 죽어있으면 재시작을 시도한다.
+ * exponential backoff: 1초, 2초, 4초
+ * 모든 재시작 실패 시 에러를 throw한다 (silent fail 아님).
+ * @param {number} [maxRetries=3]
+ * @returns {Promise<object>} Hub 정보
+ * @throws {Error} 모든 재시작 시도 실패 시
+ */
+export async function ensureHubAlive(maxRetries = 3) {
+  const hub = await getHubInfo();
+  if (hub && !hub.degraded) return hub;
+
+  let lastError = null;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const restarted = await startHubDaemon();
+      if (restarted) {
+        // 재시작 후 연결 복구 확인
+        const recovered = await getHubInfo();
+        if (recovered) return recovered;
+      }
+    } catch (err) {
+      lastError = err;
+    }
+    // 다음 재시도 전 대기: 1초, 2초, 4초 (마지막 시도 후에는 대기 없음)
+    if (i < maxRetries - 1) {
+      const backoffMs = Math.pow(2, i) * 1000; // i=0: 1초, i=1: 2초, i=2: 4초
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+  }
+
+  const error = new Error(`Hub 재시작 ${maxRetries}회 모두 실패${lastError ? `: ${lastError.message}` : ""}`);
+  error.code = "HUB_RESTART_FAILED";
+  error.cause = lastError;
+  throw error;
+}
+
 export async function fetchHubTaskList(state) {
   const hubBase = (state?.hubUrl || getDefaultHubUrl()).replace(/\/mcp$/, "");
   const teamName = state?.native?.teamName || state?.sessionName || null;

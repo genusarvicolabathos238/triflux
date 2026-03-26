@@ -44,13 +44,23 @@ export async function teamStart(args = []) {
   if (!task) return printStartUsage();
 
   console.log(`\n  ${AMBER}${BOLD}⬡ tfx multi${RESET}\n`);
-  let hub = await getHubInfo();
-  if (!hub) {
-    process.stdout.write("  Hub 시작 중...");
-    try { hub = await startHubDaemon(); } catch (error) { if (error?.code === "HUB_SERVER_MISSING") fail("hub/server.mjs 없음 — hub 모듈이 설치되지 않음"); }
-    console.log(` ${hub ? `${GREEN}✓${RESET}` : `${RED}✗${RESET}`}`);
-    if (!hub) warn("Hub 시작 실패 — 수동으로 실행: tfx hub start");
-  } else ok(`Hub: ${DIM}${hub.url}${RESET}`);
+
+  // P1b: 워커 수 계산 — 단일 워커 headless에는 Hub 불필요
+  const workerCount = assigns.length > 0 ? assigns.length : agents.length;
+  const needsHub = workerCount >= 2 || teammateMode !== "headless";
+
+  let hub = null;
+  if (needsHub) {
+    hub = await getHubInfo();
+    if (!hub) {
+      process.stdout.write("  Hub 시작 중...");
+      try { hub = await startHubDaemon(); } catch (error) { if (error?.code === "HUB_SERVER_MISSING") fail("hub/server.mjs 없음 — hub 모듈이 설치되지 않음"); }
+      console.log(` ${hub ? `${GREEN}✓${RESET}` : `${RED}✗${RESET}`}`);
+      if (!hub) warn("Hub 시작 실패 — 수동으로 실행: tfx hub start");
+    } else ok(`Hub: ${DIM}${hub.url}${RESET}`);
+  } else {
+    ok(`Hub: ${DIM}건너뜀 (단일 워커 headless)${RESET}`);
+  }
 
   const sessionId = `tfx-multi-${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 6)}`;
   const subtasks = decomposeTask(task, agents.length);
@@ -78,7 +88,7 @@ export async function teamStart(args = []) {
         : await startMuxTeam({ sessionId, task, lead, agents, subtasks, layout, hubUrl, teammateMode: effectiveMode });
 
   if (!state) return fail("in-process supervisor 시작 실패");
-  saveTeamState(state);
+  saveTeamState(state, sessionId);
   if (typeof state.postSave === "function") state.postSave();
   if (effectiveMode === "in-process") {
     ok("네이티브 in-process 팀 시작 완료");

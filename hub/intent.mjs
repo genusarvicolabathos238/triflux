@@ -1,6 +1,63 @@
 // hub/intent.mjs — Intent Classification Engine
 // 사용자 요청의 "진짜 의도"를 분석 → 카테고리 분류 → 최적 에이전트/모델 자동 선택
 
+import { execFileSync, execSync } from 'node:child_process';
+import crypto from 'node:crypto';
+
+/** 캐시 엔트리: { category, confidence, ts } */
+const _intentCache = new Map();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5분
+
+/** codex 설치 여부 (프로세스당 1회 확인) */
+let _codexAvailable = null;
+
+function _isCodexAvailable() {
+  if (_codexAvailable !== null) return _codexAvailable;
+  try {
+    const cmd = process.platform === 'win32' ? 'where' : 'which';
+    execFileSync(cmd, ['codex'], { stdio: 'ignore' });
+    _codexAvailable = true;
+  } catch {
+    _codexAvailable = false;
+  }
+  return _codexAvailable;
+}
+
+function _promptHash(prompt) {
+  return crypto.createHash('md5').update(prompt).digest('hex');
+}
+
+function _getCached(hash) {
+  const entry = _intentCache.get(hash);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > CACHE_TTL_MS) {
+    _intentCache.delete(hash);
+    return null;
+  }
+  return entry;
+}
+
+function _tryCodexClassify(prompt) {
+  try {
+    const raw = execSync(
+      `codex exec "Classify intent: ${prompt.replace(/"/g, '\\"')}. Reply JSON: {intent, confidence}"`,
+      { timeout: 8000, encoding: 'utf8' }
+    );
+    // JSON 블록 추출 (응답에 다른 텍스트가 섞일 수 있음)
+    const match = raw.match(/\{[\s\S]*?\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]);
+    const intent = typeof parsed.intent === 'string' ? parsed.intent : null;
+    const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : null;
+    if (!intent || confidence === null) return null;
+    // intent가 알려진 카테고리여야 함
+    if (!INTENT_CATEGORIES[intent]) return null;
+    return { category: intent, confidence };
+  } catch {
+    return null;
+  }
+}
+
 /** triflux 특화 의도 카테고리 (10개) */
 export const INTENT_CATEGORIES = {
   implement:  { agent: 'executor',       mcp: 'implement', effort: 'high' },
@@ -69,22 +126,60 @@ export function quickClassify(prompt) {
 
 /**
  * 전체 의도 분류 — routing 정보 포함
+ * Codex triage 경로: codex 설치 시 실행, confidence > 0.8이면 즉시 반환
+ * quickClassify가 고신뢰(>0.8)이면 Codex 건너뜀
+ * 결과는 md5 해시 기반 Map에 5분 TTL로 캐싱
  * @param {string} prompt
  * @returns {{ category: string, confidence: number, reasoning: string, routing: { agent: string, mcp: string|null, effort: string|null } }}
  */
 export function classifyIntent(prompt) {
-  const quick = quickClassify(prompt);
-  const routing = INTENT_CATEGORIES[quick.category] || INTENT_CATEGORIES.implement;
+  const hash = _promptHash(String(prompt ?? ''));
 
+  // 캐시 확인
+  const cached = _getCached(hash);
+  if (cached) {
+    const routing = INTENT_CATEGORIES[cached.category] || INTENT_CATEGORIES.implement;
+    return {
+      category: cached.category,
+      confidence: cached.confidence,
+      reasoning: `cache-hit: ${cached.category} (${cached.confidence.toFixed(2)})`,
+      routing: { agent: routing.agent, mcp: routing.mcp, effort: routing.effort },
+    };
+  }
+
+  // quickClassify 먼저
+  const quick = quickClassify(prompt);
+
+  let category = quick.category;
+  let confidence = quick.confidence;
+  let reasoning;
+
+  // quickClassify가 고신뢰(>0.8)이면 Codex 건너뜀
+  if (quick.confidence > 0.8) {
+    reasoning = `keyword-match: ${category} (${confidence.toFixed(2)})`;
+  } else if (_isCodexAvailable()) {
+    // Codex triage
+    const codexResult = _tryCodexClassify(String(prompt ?? ''));
+    if (codexResult && codexResult.confidence > 0.8) {
+      category = codexResult.category;
+      confidence = codexResult.confidence;
+      reasoning = `codex-triage: ${category} (${confidence.toFixed(2)})`;
+    } else {
+      reasoning = `keyword-match(codex-fallback): ${category} (${confidence.toFixed(2)})`;
+    }
+  } else {
+    reasoning = `keyword-match: ${category} (${confidence.toFixed(2)})`;
+  }
+
+  // 캐시 저장
+  _intentCache.set(hash, { category, confidence, ts: Date.now() });
+
+  const routing = INTENT_CATEGORIES[category] || INTENT_CATEGORIES.implement;
   return {
-    category: quick.category,
-    confidence: quick.confidence,
-    reasoning: `keyword-match: ${quick.category} (${quick.confidence.toFixed(2)})`,
-    routing: {
-      agent: routing.agent,
-      mcp: routing.mcp,
-      effort: routing.effort,
-    },
+    category,
+    confidence,
+    reasoning,
+    routing: { agent: routing.agent, mcp: routing.mcp, effort: routing.effort },
   };
 }
 

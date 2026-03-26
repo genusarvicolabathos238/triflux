@@ -171,7 +171,7 @@ thorough = args에 -t 또는 --thorough 포함
 
 if subtasks.length >= 2:
   if psmux 설치됨:
-    → Bash("tfx multi --teammate-mode headless --auto-attach --assign 'cli:prompt:role' ...")
+    → Bash("tfx multi --teammate-mode headless --auto-attach --dashboard --assign 'cli:prompt:role' ...")
     → if thorough: verify → fix loop
   else:
     → fallback: tfx-multi Phase 3 Native Teams (Agent slim wrapper)
