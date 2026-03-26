@@ -84,8 +84,7 @@ export function padRight(str, len) {
 export function truncate(str, maxLen) {
   const visible = stripAnsi(str);
   if (visible.length <= maxLen) return str;
-  // 간단한 잘라내기 (ANSI 코드 포함 시 근사치)
-  return str.slice(0, maxLen - 1) + "…";
+  return visible.slice(0, maxLen - 1) + "…";
 }
 
 export function stripAnsi(str) {
@@ -94,7 +93,7 @@ export function stripAnsi(str) {
 
 // ── 진행률 바 ──
 export function progressBar(ratio, width = 20) {
-  const filled = Math.round(ratio * width);
+  const filled = Math.max(0, Math.min(width, Math.round(ratio * width)));
   const empty = width - filled;
   return `${FG.accent}${"█".repeat(filled)}${FG.muted}${"░".repeat(empty)}${RESET}`;
 }

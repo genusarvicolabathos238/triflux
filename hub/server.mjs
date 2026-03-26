@@ -1,6 +1,6 @@
 // hub/server.mjs — HTTP MCP + REST bridge + Named Pipe 서버 진입점
 import { createServer as createHttpServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { extname, join, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { writeFileSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -124,7 +124,12 @@ function isAuthorizedRequest(req, path, hubToken) {
     return isLoopbackRemoteAddress(req.socket.remoteAddress);
   }
   if (isPublicPath(path)) return true;
-  return extractBearerToken(req) === hubToken;
+  const supplied = extractBearerToken(req);
+  if (!supplied) return false;
+  const bufA = Buffer.from(supplied, 'utf8');
+  const bufB = Buffer.from(hubToken, 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
 }
 
 function resolveTeamStatusCode(result) {
@@ -331,6 +336,8 @@ export async function startHub({ port = 27888, dbPath, host = '127.0.0.1', sessi
   }
 
   const httpServer = createHttpServer(wrapRequestHandler(async (req, res) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
     const path = getRequestPath(req.url);
     const corsAllowed = applyCorsHeaders(req, res);
 
@@ -623,7 +630,8 @@ export async function startHub({ port = 27888, dbPath, host = '127.0.0.1', sessi
         return writeJson(res, 404, { ok: false, error: 'Unknown bridge endpoint' });
       } catch (error) {
         if (!res.headersSent) {
-          writeJson(res, 500, { ok: false, error: error.message });
+          console.error('[tfx-hub] bridge error:', error);
+          writeJson(res, 500, { ok: false, error: 'Internal server error' });
         }
         return;
       }

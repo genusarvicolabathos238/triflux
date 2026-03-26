@@ -290,6 +290,16 @@ async function tryRestartHub() {
   const serverPath = join(PROJECT_ROOT, 'hub', 'server.mjs');
   if (!existsSync(serverPath)) return false;
 
+  if (existsSync(HUB_PID_FILE)) {
+    try {
+      const info = JSON.parse(readFileSync(HUB_PID_FILE, 'utf8'));
+      if (info.pid) {
+        try { process.kill(info.pid, 0); return false; } // still alive
+        catch (e) { if (e.code === 'EPERM') return false; } // alive, no permission
+      }
+    } catch {} // corrupt PID file, proceed with restart
+  }
+
   try {
     const child = spawn(process.execPath, [serverPath], {
       detached: true,
