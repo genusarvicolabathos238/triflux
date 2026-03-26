@@ -117,6 +117,11 @@ async function main() {
   let raw = "";
   for await (const chunk of process.stdin) raw += chunk;
 
+  if (!raw || !raw.trim()) {
+    console.error('[headless-guard] stdin이 비어있습니다 — 기본 허용');
+    process.exit(0);
+  }
+
   let input;
   try {
     input = JSON.parse(raw);

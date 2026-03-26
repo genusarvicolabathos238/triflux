@@ -1,6 +1,6 @@
 // hub/server.mjs — HTTP MCP + REST bridge + Named Pipe 서버 진입점
 import { createServer as createHttpServer } from 'node:http';
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { extname, join, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { writeFileSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -138,6 +138,12 @@ function applyCorsHeaders(req, res) {
   return true;
 }
 
+function safeTokenCompare(a, b) {
+  const ha = createHash('sha256').update(a).digest();
+  const hb = createHash('sha256').update(b).digest();
+  return timingSafeEqual(ha, hb);
+}
+
 function isAuthorizedRequest(req, path, hubToken) {
   if (!hubToken) {
     return isLoopbackRemoteAddress(req.socket.remoteAddress);
@@ -145,10 +151,7 @@ function isAuthorizedRequest(req, path, hubToken) {
   if (isPublicPath(path)) return true;
   const supplied = extractBearerToken(req);
   if (!supplied) return false;
-  const bufA = Buffer.from(supplied, 'utf8');
-  const bufB = Buffer.from(hubToken, 'utf8');
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
+  return safeTokenCompare(supplied, hubToken);
 }
 
 function resolveTeamStatusCode(result) {
@@ -368,14 +371,16 @@ export async function startHub({ port = 27888, dbPath, host = '127.0.0.1', sessi
     }
 
     const clientIp = req.socket.remoteAddress || 'unknown';
-    const rateCheck = checkRateLimit(clientIp);
-    if (!rateCheck.allowed) {
-      return writeJson(
-        res,
-        429,
-        { ok: false, error: 'Too Many Requests' },
-        { 'Retry-After': String(rateCheck.retryAfterSec) },
-      );
+    if (!isLoopbackRemoteAddress(clientIp)) {
+      const rateCheck = checkRateLimit(clientIp);
+      if (!rateCheck.allowed) {
+        return writeJson(
+          res,
+          429,
+          { ok: false, error: 'Too Many Requests' },
+          { 'Retry-After': String(rateCheck.retryAfterSec) },
+        );
+      }
     }
 
     if (!isAuthorizedRequest(req, path, HUB_TOKEN)) {

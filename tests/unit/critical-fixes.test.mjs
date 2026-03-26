@@ -116,9 +116,9 @@ describe("hub/server.mjs: timing-safe token comparison", () => {
     const src = readFileSync(join(ROOT, "hub/server.mjs"), "utf8");
     // Verify it appears in an authorization context, not just as an import
     const importLine = src.includes("import") && src.includes("timingSafeEqual");
-    const usageLine = /timingSafeEqual\(buf[AB],\s*buf[AB]\)/.test(src);
+    const usageLine = /timingSafeEqual\(\w+,\s*\w+\)/.test(src);
     assert.ok(importLine, "timingSafeEqual should be imported");
-    assert.ok(usageLine, "timingSafeEqual should be called with buffers for token comparison");
+    assert.ok(usageLine, "timingSafeEqual should be called for token comparison");
   });
 });
 
