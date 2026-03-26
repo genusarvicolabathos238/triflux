@@ -122,7 +122,27 @@ function writeRuntime(controlPort) {
   writeFileSync(runtimeFile, JSON.stringify(runtime, null, 2) + "\n");
 }
 
+// Shell metacharacters that can be used for command injection.
+// member.command is a CLI invocation string (e.g. "codex --flag value").
+// shell: true is required on Windows for .cmd executables, so we validate
+// the command string instead of removing the shell option.
+const SAFE_COMMAND_RE = /^[a-zA-Z0-9 _./:@"'=\-\\]+$/;
+
+function validateMemberCommand(command, memberName) {
+  if (typeof command !== "string" || command.trim().length === 0) {
+    throw new Error(`member "${memberName}": command must be a non-empty string`);
+  }
+  if (!SAFE_COMMAND_RE.test(command)) {
+    throw new Error(
+      `member "${memberName}": command contains disallowed characters — ` +
+      `shell metacharacters (;&|$\`()<>{}\\n\\r) are not permitted`
+    );
+  }
+}
+
 function spawnMember(member) {
+  validateMemberCommand(member.command, member.name);
+
   const outPath = join(logsDir, `${member.name}.out.log`);
   const errPath = join(logsDir, `${member.name}.err.log`);
 
