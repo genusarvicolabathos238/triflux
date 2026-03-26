@@ -745,11 +745,26 @@ export function createStore(dbPath) {
       return parseReflexionRow(S.getReflexionById.get(id));
     },
 
-    findReflexion(errorPattern) {
-      let rows = S.findReflexionExact.all(errorPattern);
+    findReflexion(errorPattern, context = {}) {
+      const ctxKeys = Object.keys(context).filter(k => context[k] != null);
+      const ctxWhere = ctxKeys.map(k => ` AND json_extract(context_json, '$.${k}') = ?`).join('');
+      const ctxVals = ctxKeys.map(k => context[k]);
+
+      if (ctxKeys.length === 0) {
+        let rows = S.findReflexionExact.all(errorPattern);
+        if (rows.length) return rows.map(parseReflexionRow);
+        const escaped = errorPattern.replace(/[%_\\]/g, '\\$&');
+        rows = S.findReflexionLike.all(`%${escaped.slice(0, 100)}%`);
+        return rows.map(parseReflexionRow);
+      }
+
+      const exactSql = `SELECT * FROM reflexion_entries WHERE error_pattern = ?${ctxWhere} ORDER BY confidence DESC`;
+      let rows = db.prepare(exactSql).all(errorPattern, ...ctxVals);
       if (rows.length) return rows.map(parseReflexionRow);
+
       const escaped = errorPattern.replace(/[%_\\]/g, '\\$&');
-      rows = S.findReflexionLike.all(`%${escaped.slice(0, 100)}%`);
+      const likeSql = `SELECT * FROM reflexion_entries WHERE error_pattern LIKE ? ESCAPE '\\'${ctxWhere} ORDER BY confidence DESC LIMIT 10`;
+      rows = db.prepare(likeSql).all(`%${escaped.slice(0, 100)}%`, ...ctxVals);
       return rows.map(parseReflexionRow);
     },
 

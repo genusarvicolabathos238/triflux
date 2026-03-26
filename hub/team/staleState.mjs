@@ -94,10 +94,12 @@ function findProcessTokens(state, sessionId) {
 }
 
 function isPidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
+  } catch (e) {
+    if (e?.code === 'EPERM') return true;
     return false;
   }
 }

@@ -243,9 +243,10 @@ describe("headless: buildHeadlessCommand", async () => {
     assert.ok(cmd.includes("--output-format text"));
   });
 
-  it("프롬프트의 단일인용부호 이스케이프", () => {
+  it("프롬프트를 임시 파일에 저장 (셸 주입 방지)", () => {
     const cmd = buildHeadlessCommand("codex", "it's a test", "/tmp/r.txt");
-    assert.ok(cmd.includes("it''s a test"), `단일인용부호가 이스케이프되어야 함: ${cmd}`);
+    assert.ok(cmd.includes("Get-Content -Raw"), `프롬프트가 파일에서 읽혀야 함: ${cmd}`);
+    assert.ok(cmd.includes("prompt-"), `프롬프트 파일 경로가 포함되어야 함: ${cmd}`);
   });
 
   it("지원하지 않는 CLI → throw", () => {
@@ -259,9 +260,18 @@ describe("headless: buildHeadlessCommand", async () => {
     assert.ok(cmd2.includes("gemini"), `designer → gemini: ${cmd2}`);
   });
 
-  it("MCP 프로필 힌트 주입 (implement)", () => {
+  it("MCP 프로필 힌트 주입 (implement)", async () => {
+    const { readFileSync, existsSync } = await import("node:fs");
     const cmd = buildHeadlessCommand("codex", "test", "/tmp/r.txt", { handoff: false, mcp: "implement" });
-    assert.ok(cmd.includes("[MCP: implement]"), `implement 힌트가 포함되어야 함: ${cmd}`);
+    // 힌트는 프롬프트 파일에 포함됨 — 파일 경로를 추출하고 내용 검증
+    const promptMatch = cmd.match(/prompt-[a-f0-9]+\.txt/);
+    assert.ok(promptMatch, `프롬프트 파일 경로가 명령에 포함되어야 함: ${cmd}`);
+    // 프롬프트 파일이 생성되었으면 MCP 힌트 포함 확인
+    const fullPath = cmd.match(/'([^']*prompt-[a-f0-9]+\.txt)'/)?.[1];
+    if (fullPath && existsSync(fullPath)) {
+      const content = readFileSync(fullPath, "utf8");
+      assert.ok(content.includes("[MCP: implement]"), `프롬프트 파일에 MCP 힌트가 포함되어야 함: ${content.slice(0, 100)}`);
+    }
   });
 
   it("MCP 프로필 없으면 힌트 미삽입", () => {

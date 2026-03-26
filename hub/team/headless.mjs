@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { execSync, spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
 import {
   createPsmuxSession,
   killPsmuxSession,
@@ -84,16 +85,21 @@ export function buildHeadlessCommand(cli, prompt, resultFile, opts = {}) {
   // P2: HANDOFF 지시를 프롬프트에 삽입 (워커가 구조화된 handoff 블록을 출력하도록)
   const handoffHint = handoff ? `\n\n${HANDOFF_INSTRUCTION_SHORT}` : "";
   const fullPrompt = `${contextPrefix}${prompt}${mcpHint}${handoffHint}`;
-  const escaped = fullPrompt.replace(/'/g, "''");
+
+  // 보안: 프롬프트를 임시 파일에 쓰고 파일 참조로 전달 (셸 주입 방지)
+  if (!existsSync(RESULT_DIR)) mkdirSync(RESULT_DIR, { recursive: true });
+  const promptFile = join(RESULT_DIR, "prompt-" + randomUUID().slice(0, 8) + ".txt").replace(/\\/g, "/");
+  writeFileSync(promptFile, fullPrompt, "utf8");
+
   const cls = "Clear-Host; ";
 
   switch (resolvedCli) {
     case "codex":
-      return `${cls}codex exec '${escaped}' -o '${resultFile}' --color never`;
+      return `${cls}codex exec (Get-Content -Raw '${promptFile}') -o '${resultFile}' --color never`;
     case "gemini":
-      return `${cls}gemini -p '${escaped}' -o text > '${resultFile}' 2>'${resultFile}.err'`;
+      return `${cls}gemini -p (Get-Content -Raw '${promptFile}') -o text > '${resultFile}' 2>'${resultFile}.err'`;
     case "claude":
-      return `${cls}claude -p '${escaped}' --output-format text > '${resultFile}' 2>&1`;
+      return `${cls}claude -p (Get-Content -Raw '${promptFile}') --output-format text > '${resultFile}' 2>&1`;
     default:
       throw new Error(`지원하지 않는 CLI: ${resolvedCli} (원본: ${cli})`);
   }
@@ -464,6 +470,9 @@ export function ensureWtProfile(workerCount = 2) {
  * @returns {boolean} 성공 여부
  */
 export function autoAttachTerminal(sessionName, opts = {}, workerCount = 2) {
+  // 보안: sessionName 셸 주입 방지 — 영숫자, 하이픈, 언더스코어만 허용
+  const safeName = String(sessionName).replace(/[^a-zA-Z0-9_\-]/g, "");
+  sessionName = safeName || "tfx-session";
   if (!process.env.WT_SESSION) return false;
   try { execSync("where wt.exe", { stdio: "ignore" }); } catch { return false; }
   ensureWtProfile(workerCount);
