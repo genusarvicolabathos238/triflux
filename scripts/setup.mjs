@@ -215,6 +215,11 @@ const SYNC_MAP = [
     dst: join(CLAUDE_DIR, "scripts", "headless-guard-fast.sh"),
     label: "headless-guard-fast.sh",
   },
+  {
+    src: join(PLUGIN_ROOT, "scripts", "tfx-gate-activate.mjs"),
+    dst: join(CLAUDE_DIR, "scripts", "tfx-gate-activate.mjs"),
+    label: "tfx-gate-activate.mjs",
+  },
 ];
 
 function getVersion(filePath) {
@@ -556,6 +561,37 @@ function applyHooks(s) {
       for (const h of entry.hooks) {
         if (typeof h.command === "string" && h.command.includes("headless-guard") && !h.command.includes(guardScriptPath)) {
           h.command = `bash "${guardScriptPath}"`;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  // ── PreToolUse 훅: tfx-gate-activate (Skill 감지 → A+B gate) ──
+  const gateScriptPath = join(CLAUDE_DIR, "scripts", "tfx-gate-activate.mjs").replace(/\\/g, "/");
+  const hasGateHook = s.hooks.PreToolUse.some((entry) =>
+    Array.isArray(entry.hooks) &&
+    entry.hooks.some((h) => typeof h.command === "string" && h.command.includes("tfx-gate-activate")),
+  );
+
+  if (!hasGateHook && existsSync(gateScriptPath.replace(/\//g, "\\"))) {
+    s.hooks.PreToolUse.push({
+      matcher: "Skill",
+      hooks: [
+        {
+          type: "command",
+          command: `node "${gateScriptPath}"`,
+          timeout: 2,
+        },
+      ],
+    });
+    changed = true;
+  } else if (hasGateHook) {
+    for (const entry of s.hooks.PreToolUse) {
+      if (!Array.isArray(entry.hooks)) continue;
+      for (const h of entry.hooks) {
+        if (typeof h.command === "string" && h.command.includes("tfx-gate-activate") && !h.command.includes(gateScriptPath)) {
+          h.command = `node "${gateScriptPath}"`;
           changed = true;
         }
       }

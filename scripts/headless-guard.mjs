@@ -8,22 +8,65 @@
  * v2: 마커 파일 의존 제거. psmux 설치 여부만으로 판단.
  *     Opus가 SKILL.md를 무시해도 auto-route가 작동한다.
  *
+ * v3: A(gate) + B(nudge) — OMC 패턴 도입
+ *     A: tfx-multi 활성 시 headless dispatch 전까지 Agent 작업 위임 차단
+ *     B: dispatch 후 네이티브 드리프트 감지 시 nudge
+ *     상태: $TMPDIR/tfx-multi-state.json (tfx-multi-activate.mjs가 생성)
+ *
  * 동작:
  * - psmux 설치 + Bash(tfx-route.sh) → updatedInput: tfx multi --headless --assign
  * - psmux 설치 + Bash(codex exec / gemini -p) → deny
  * - psmux 설치 + Agent(codex/gemini CLI 래핑) → deny
  * - psmux 미설치 → 전부 통과
+ * - tfx-multi 활성 + Agent(work) before dispatch → deny (A: gate)
+ * - tfx-multi 활성 + Agent(work) after dispatch → nudge (B: nudge)
  *
  * 성능: psmux 감지 결과를 5분간 캐시 ($TMPDIR/tfx-psmux-check.json)
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const CACHE_FILE = join(tmpdir(), "tfx-psmux-check.json");
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5분
+
+// ── tfx-multi 상태 관리 (A+B) ──
+const MULTI_STATE_FILE = join(tmpdir(), "tfx-multi-state.json");
+const MULTI_EXPIRE_MS = 30 * 60 * 1000; // 30분 자동 만료
+const GATE_THRESHOLD = 2;   // A: dispatch 전 허용할 Agent 호출 수
+const NUDGE_THRESHOLD = 4;  // B: dispatch 후 nudge 트리거 횟수
+
+function readMultiState() {
+  try {
+    if (!existsSync(MULTI_STATE_FILE)) return null;
+    const state = JSON.parse(readFileSync(MULTI_STATE_FILE, "utf8"));
+    if (!state.active) return null;
+    // 자동 만료
+    if (Date.now() - state.activatedAt > MULTI_EXPIRE_MS) {
+      try { unlinkSync(MULTI_STATE_FILE); } catch { /* ignore */ }
+      return null;
+    }
+    return state;
+  } catch { return null; }
+}
+
+function writeMultiState(state) {
+  try {
+    writeFileSync(MULTI_STATE_FILE, JSON.stringify(state));
+  } catch { /* ignore */ }
+}
+
+function nudge(message) {
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      additionalContext: message,
+    },
+  }));
+  process.exit(0);
+}
 
 function isPsmuxInstalled() {
   // 캐시 확인
@@ -135,8 +178,14 @@ async function main() {
   if (toolName === "Bash") {
     const cmd = toolInput.command || "";
 
-    // headless 명령은 통과
+    // headless 명령은 통과 + dispatch 감지 (A: gate 해제)
     if (cmd.includes("tfx multi") || cmd.includes("triflux.mjs multi")) {
+      const multiState = readMultiState();
+      if (multiState && cmd.includes("--assign")) {
+        multiState.dispatched = true;
+        multiState.nativeWorkCallsSinceDispatch = 0;
+        writeMultiState(multiState);
+      }
       process.exit(0);
     }
 
@@ -197,15 +246,53 @@ async function main() {
     }
   }
 
-  // ── Agent: CLI 워커 래핑 → deny (Claude native는 통과) ──
+  // ── Agent: A(gate) + B(nudge) + CLI 래핑 deny ──
   if (toolName === "Agent") {
     const subType = (toolInput.subagent_type || "").toLowerCase();
-    // Claude native subagent types → 무조건 통과
     const NATIVE_TYPES = new Set(["explore", "plan", "general-purpose", ""]);
-    if (NATIVE_TYPES.has(subType)) process.exit(0);
-    // oh-my-claudecode 계열도 통과
-    if (subType.startsWith("oh-my-claudecode:")) process.exit(0);
+    const isNative = NATIVE_TYPES.has(subType) || subType.startsWith("oh-my-claudecode:");
 
+    // ── A+B: tfx-multi 상태 기반 처리 ──
+    const multiState = readMultiState();
+    if (multiState && multiState.active && isNative) {
+      if (!multiState.dispatched) {
+        // ── A: gate — dispatch 전, Agent 작업 위임 제한 ──
+        multiState.nativeWorkCalls = (multiState.nativeWorkCalls || 0) + 1;
+        writeMultiState(multiState);
+
+        if (multiState.nativeWorkCalls > GATE_THRESHOLD) {
+          deny(
+            `[headless-guard] tfx-multi gate: Agent(${subType || "default"}) 호출 ${multiState.nativeWorkCalls}회 — headless에 먼저 dispatch하세요.\n` +
+            'Bash("tfx multi --teammate-mode headless --auto-attach --dashboard --assign \'codex:프롬프트:역할\' --timeout 600")',
+          );
+        }
+        // 허용 범위 내 → 경고 + 통과
+        nudge(
+          `[headless-guard] tfx-multi 활성 (${multiState.nativeWorkCalls}/${GATE_THRESHOLD}). ` +
+          "headless dispatch 후 작업을 시작하세요.",
+        );
+      } else {
+        // ── B: nudge — dispatch 후, 네이티브 드리프트 감지 ──
+        multiState.nativeWorkCallsSinceDispatch = (multiState.nativeWorkCallsSinceDispatch || 0) + 1;
+        writeMultiState(multiState);
+
+        if (multiState.nativeWorkCallsSinceDispatch >= NUDGE_THRESHOLD) {
+          multiState.nativeWorkCallsSinceDispatch = 0;
+          writeMultiState(multiState);
+          nudge(
+            "[headless-guard] nudge: headless 워커가 실행 중입니다. " +
+            "결과를 기다리거나 추가 --assign으로 위임하세요.",
+          );
+        }
+      }
+      // native → 통과 (gate deny 안 걸린 경우)
+      process.exit(0);
+    }
+
+    // native → 통과 (tfx-multi 비활성)
+    if (isNative) process.exit(0);
+
+    // ── CLI 래핑 체크 (기존) ──
     const combined = `${(toolInput.prompt || "").toLowerCase()} ${(toolInput.description || "").toLowerCase()}`;
     const cliPatterns = [
       /codex\s+(exec|run|실행)/,
