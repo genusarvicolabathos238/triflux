@@ -1,7 +1,7 @@
 // hub/intent.mjs — Intent Classification Engine
 // 사용자 요청의 "진짜 의도"를 분석 → 카테고리 분류 → 최적 에이전트/모델 자동 선택
 
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 
 /** 캐시 엔트리: { category, confidence, ts } */
@@ -39,8 +39,9 @@ function _getCached(hash) {
 
 function _tryCodexClassify(prompt) {
   try {
-    const raw = execSync(
-      `codex exec "Classify intent: ${prompt.replace(/"/g, '\\"')}. Reply JSON: {intent, confidence}"`,
+    const raw = execFileSync(
+      'codex',
+      ['exec', `Classify intent: ${prompt}. Reply JSON: {intent, confidence}`],
       { timeout: 8000, encoding: 'utf8' }
     );
     // JSON 블록 추출 (응답에 다른 텍스트가 섞일 수 있음)

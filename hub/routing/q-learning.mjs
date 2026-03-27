@@ -22,7 +22,7 @@ try {
 /** 사용 가능한 CLI 액션 */
 const ACTIONS = ['codex', 'gemini', 'claude', 'haiku', 'sonnet'];
 
-/** 특성 벡터 키워드 (32차원, 에이전트 타입 기반) */
+/** 특성 벡터 키워드 (48차원, 에이전트 타입 기반) */
 const FEATURE_KEYWORDS = [
   // 실행/구현 (codex 친화)
   'implement', 'execute', 'build', 'fix', 'debug', 'code', 'refactor', 'test',
@@ -32,16 +32,32 @@ const FEATURE_KEYWORDS = [
   'design', 'ui', 'ux', 'frontend', 'visual', 'document', 'write', 'explain',
   // 간단/빠른 (haiku 친화)
   'simple', 'quick', 'trivial', 'rename', 'format', 'lint', 'typo', 'minor',
+  // 한국어 — 실행/구현 (codex 친화)
+  '구현', '빌드', '수정', '디버깅', '리팩터링', '테스트',
+  // 한국어 — 분석/설계 (claude/sonnet 친화)
+  '분석', '아키텍처', '설계', '검토', '보안', '최적화',
+  // 한국어 — 디자인/문서 (gemini 친화)
+  '디자인', '문서화',
+  // 한국어 — 간단/빠른 (haiku 친화)
+  '간단', '사소한',
 ];
 
 /**
- * 텍스트에서 32차원 특성 벡터 추출
+ * 텍스트에서 48차원 특성 벡터 추출
+ * 단어 경계를 기준으로 매칭하여 부분 문자열 오탐을 방지한다.
  * @param {string} text
- * @returns {number[]} 32-dim binary feature vector
+ * @returns {number[]} 48-dim binary feature vector
  */
 function extractFeatures(text) {
   const lower = text.toLowerCase();
-  return FEATURE_KEYWORDS.map((kw) => (lower.includes(kw) ? 1 : 0));
+  return FEATURE_KEYWORDS.map((kw) => {
+    // 영문 단일 단어: 단어 경계(\b) 적용
+    // 한국어 또는 다중 단어 구문: 공백/문장 경계 기반 포함 여부 확인
+    if (/^[a-z]+$/.test(kw)) {
+      return new RegExp(`\\b${kw}\\b`).test(lower) ? 1 : 0;
+    }
+    return lower.includes(kw) ? 1 : 0;
+  });
 }
 
 /**

@@ -15,6 +15,11 @@ const COMPLEXITY_INDICATORS = {
       'cryptograph', 'encryption', 'authentication', 'authorization',
       'database schema', 'data model', 'state machine', 'event-driven',
       'microservice', 'orchestrat', 'pipeline', 'workflow',
+      // 한국어
+      '리팩터링', '리팩토링', '아키텍처', '보안', '마이그레이션', '분산',
+      '동시성', '병렬', '최적화', '성능', '확장성',
+      '암호화', '인증', '인가', '데이터베이스 스키마', '데이터 모델',
+      '상태 머신', '이벤트 드리븐', '마이크로서비스', '오케스트레이션',
     ],
     weight: 0.85,
   },
@@ -25,6 +30,10 @@ const COMPLEXITY_INDICATORS = {
       'validation', 'error handling', 'testing', 'debug', 'fix bug',
       'configuration', 'deploy', 'ci/cd', 'docker', 'container',
       'cache', 'queue', 'webhook', 'notification', 'logging',
+      // 한국어
+      '구현', '통합', '엔드포인트', '미들웨어', '유효성 검사',
+      '에러 처리', '오류 처리', '테스트', '디버깅', '버그 수정',
+      '설정', '배포', '컨테이너', '캐시', '알림', '로깅',
     ],
     weight: 0.55,
   },
@@ -34,6 +43,9 @@ const COMPLEXITY_INDICATORS = {
       'readme', 'comment', 'typo', 'rename', 'format', 'lint',
       'update version', 'bump', 'add dependency', 'install',
       'simple', 'trivial', 'minor', 'small change', 'one-liner',
+      // 한국어
+      '문서화', '주석', '오타', '이름 변경', '포맷', '버전 업데이트',
+      '의존성 추가', '설치', '간단', '사소한', '소규모', '한 줄',
     ],
     weight: 0.2,
   },

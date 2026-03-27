@@ -88,6 +88,7 @@ export async function teamStart(args = []) {
         : await startMuxTeam({ sessionId, task, lead, agents, subtasks, layout, hubUrl, teammateMode: effectiveMode });
 
   if (!state) return fail("in-process supervisor 시작 실패");
+  state.sessionId = sessionId;
   saveTeamState(state, sessionId);
   if (typeof state.postSave === "function") state.postSave();
   if (effectiveMode === "in-process") {

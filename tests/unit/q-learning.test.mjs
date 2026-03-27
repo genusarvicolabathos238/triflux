@@ -321,10 +321,10 @@ describe('Q-table 영속화', () => {
 // 6. 내부 유틸리티
 // ========================================================================
 describe('내부 유틸리티', () => {
-  it('extractFeatures: 32차원 벡터', () => {
+  it('extractFeatures: 48차원 벡터', () => {
     const features = extractFeatures('implement a feature');
     assert.equal(features.length, FEATURE_KEYWORDS.length);
-    assert.equal(features.length, 32);
+    assert.equal(features.length, 48);
     // 'implement'가 포함되므로 해당 인덱스가 1
     const idx = FEATURE_KEYWORDS.indexOf('implement');
     assert.equal(features[idx], 1);
