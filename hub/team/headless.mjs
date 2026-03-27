@@ -4,7 +4,7 @@
 // v6.0.0: Lead-direct 모드 (runHeadlessInteractive, autoAttachTerminal)
 // 의존성: psmux.mjs (Node.js 내장 모듈만 사용)
 import { join } from "node:path";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { execSync, spawn } from "node:child_process";
 import { createRequire } from "node:module";
@@ -414,6 +414,23 @@ function getWtDefaultFontSize() {
   return 12;
 }
 
+/**
+ * 파일을 원자적으로 쓴다 — 임시 파일에 먼저 기록 후 rename으로 교체.
+ * 프로세스가 쓰기 도중 충돌해도 원본 파일이 손상되지 않는다.
+ * @param {string} filePath — 대상 파일 경로
+ * @param {string} data — 쓸 내용
+ */
+function atomicWriteSync(filePath, data) {
+  const tmpPath = `${filePath}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmpPath, data, "utf8");
+    renameSync(tmpPath, filePath);
+  } catch (err) {
+    try { writeFileSync(tmpPath.replace(/\.tmp$/, ".tmp.del"), ""); } catch { /* 무시 */ }
+    throw err;
+  }
+}
+
 export function ensureWtProfile(workerCount = 2) {
   const settingsPaths = [
     join(process.env.LOCALAPPDATA || "", "Packages/Microsoft.WindowsTerminal_8wekyb3d8bbwe/LocalState/settings.json"),
@@ -451,7 +468,7 @@ export function ensureWtProfile(workerCount = 2) {
         settings.profiles.list.push(profile);
       }
 
-      writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf8");
+      atomicWriteSync(settingsPath, JSON.stringify(settings, null, 2));
       return true;
     } catch { /* 파싱 실패 — 다음 경로 */ }
   }

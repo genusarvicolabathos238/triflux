@@ -13,8 +13,8 @@ const ROOT = join(__dirname, "../..");
 // ========================================================================
 // 1. staleState: isPidAlive handles EPERM gracefully
 // ========================================================================
-describe("staleState: isPidAlive EPERM 처리", () => {
-  const src = readFileSync(join(ROOT, "hub/team/staleState.mjs"), "utf8");
+describe("process-utils: isPidAlive EPERM 처리", () => {
+  const src = readFileSync(join(ROOT, "hub/lib/process-utils.mjs"), "utf8");
 
   it("isPidAlive 함수 내에 EPERM 문자열이 존재해야 함", () => {
     // isPidAlive 함수 블록 추출

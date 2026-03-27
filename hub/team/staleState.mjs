@@ -7,6 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
 import { forceCleanupTeam } from "./nativeProxy.mjs";
+import { isPidAlive } from "../lib/process-utils.mjs";
 
 export const TEAM_STATE_FILE_NAME = "team-state.json";
 export const STALE_TEAM_MAX_AGE_MS = 60 * 60 * 1000;
@@ -91,17 +92,6 @@ function findProcessTokens(state, sessionId) {
   }
 
   return Array.from(tokenSet);
-}
-
-function isPidAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    if (e?.code === 'EPERM') return true;
-    return false;
-  }
 }
 
 function normalizeProcessEntries(processEntries = []) {
@@ -268,7 +258,7 @@ export function findNearestOmcStateDir(startDir = process.cwd()) {
 }
 
 export function inspectStaleOmcTeams(options = {}) {
-  const stateRoot = options.stateRoot || findNearestOmcStateDir(options.startDir || process.cwd());
+  const stateRoot = options.stateRoot !== undefined ? options.stateRoot : findNearestOmcStateDir(options.startDir || process.cwd());
   const requestedTeamsRoot = options.teamsRoot || CLAUDE_TEAMS_ROOT;
   const teamsRoot = safeStat(requestedTeamsRoot)?.isDirectory() ? requestedTeamsRoot : null;
 

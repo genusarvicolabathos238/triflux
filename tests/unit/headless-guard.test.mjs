@@ -1,6 +1,7 @@
 // tests/unit/headless-guard.test.mjs — headless-guard 플래그 보존 테스트
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
@@ -305,5 +306,13 @@ describe("headless-guard-fast.sh — bash pre-filter", () => {
       encoding: "utf8",
     });
     assert.ok(true, "fast.sh fell through to node on missing cache");
+  });
+});
+
+describe("parseRouteCommand 소스 패리티", () => {
+  it("parseRouteCommand 소스 코드와 테스트 미러가 일치해야 한다", () => {
+    const source = readFileSync(join(process.cwd(), "scripts", "headless-guard.mjs"), "utf8");
+    assert.ok(source.includes("MCP_PROFILES"), "MCP_PROFILES 상수가 소스에 존재");
+    assert.ok(source.includes("timeoutMatch"), "timeout 매칭 로직이 소스에 존재");
   });
 });

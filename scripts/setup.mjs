@@ -107,6 +107,46 @@ const SYNC_MAP = [
     label: "hud-qos-status.mjs",
   },
   {
+    src: join(PLUGIN_ROOT, "hud", "colors.mjs"),
+    dst: join(CLAUDE_DIR, "hud", "colors.mjs"),
+    label: "hud/colors.mjs",
+  },
+  {
+    src: join(PLUGIN_ROOT, "hud", "constants.mjs"),
+    dst: join(CLAUDE_DIR, "hud", "constants.mjs"),
+    label: "hud/constants.mjs",
+  },
+  {
+    src: join(PLUGIN_ROOT, "hud", "terminal.mjs"),
+    dst: join(CLAUDE_DIR, "hud", "terminal.mjs"),
+    label: "hud/terminal.mjs",
+  },
+  {
+    src: join(PLUGIN_ROOT, "hud", "utils.mjs"),
+    dst: join(CLAUDE_DIR, "hud", "utils.mjs"),
+    label: "hud/utils.mjs",
+  },
+  {
+    src: join(PLUGIN_ROOT, "hud", "renderers.mjs"),
+    dst: join(CLAUDE_DIR, "hud", "renderers.mjs"),
+    label: "hud/renderers.mjs",
+  },
+  {
+    src: join(PLUGIN_ROOT, "hud", "providers", "claude.mjs"),
+    dst: join(CLAUDE_DIR, "hud", "providers", "claude.mjs"),
+    label: "hud/providers/claude.mjs",
+  },
+  {
+    src: join(PLUGIN_ROOT, "hud", "providers", "codex.mjs"),
+    dst: join(CLAUDE_DIR, "hud", "providers", "codex.mjs"),
+    label: "hud/providers/codex.mjs",
+  },
+  {
+    src: join(PLUGIN_ROOT, "hud", "providers", "gemini.mjs"),
+    dst: join(CLAUDE_DIR, "hud", "providers", "gemini.mjs"),
+    label: "hud/providers/gemini.mjs",
+  },
+  {
     src: join(PLUGIN_ROOT, "scripts", "notion-read.mjs"),
     dst: join(CLAUDE_DIR, "scripts", "notion-read.mjs"),
     label: "notion-read.mjs",
@@ -174,7 +214,7 @@ function hasProfileSection(tomlContent, profileName) {
 function replaceProfileSection(tomlContent, profileName, lines) {
   const header = `[profiles.${profileName}]`;
   const sectionRe = new RegExp(
-    `^\\[profiles\\.${escapeRegExp(profileName)}\\]\\s*\\n(?:(?!\\[)[^\\n]*\\n?)*`,
+    `^\\[profiles\\.${escapeRegExp(profileName)}\\]\\s*\\n?(?:(?!\\[)[^\\n]*\\n?)*`,
     "m",
   );
   const replacement = `${header}\n${lines.join("\n")}\n`;
@@ -336,19 +376,21 @@ const skillsDst = join(CLAUDE_DIR, "skills");
 function syncSkillDir(srcDir, dstDir) {
   if (!existsSync(dstDir)) mkdirSync(dstDir, { recursive: true });
 
+  let count = 0;
   for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
     const srcPath = join(srcDir, entry.name);
     const dstPath = join(dstDir, entry.name);
 
     if (entry.isDirectory()) {
-      syncSkillDir(srcPath, dstPath);
+      count += syncSkillDir(srcPath, dstPath);
     } else if (entry.name.endsWith(".md")) {
       if (shouldSyncTextFile(srcPath, dstPath)) {
         copyFileSync(srcPath, dstPath);
-        synced++;
+        count++;
       }
     }
   }
+  return count;
 }
 
 if (existsSync(skillsSrc)) {
@@ -357,7 +399,7 @@ if (existsSync(skillsSrc)) {
     const skillMd = join(skillDir, "SKILL.md");
     if (!existsSync(skillMd)) continue;
 
-    syncSkillDir(skillDir, join(skillsDst, name));
+    synced += syncSkillDir(skillDir, join(skillsDst, name));
   }
 }
 

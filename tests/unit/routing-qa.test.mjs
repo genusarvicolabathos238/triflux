@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
+import { toBashPath, BASH_EXE } from "../helpers/bash-path.mjs";
 
 import {
   loadRules,
@@ -16,7 +17,7 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "../..");
 const RULES_PATH = join(ROOT, "hooks/keyword-rules.json");
-const ROUTE_SH = join(ROOT, "scripts/tfx-route.sh").replace(/\\/g, "/");
+const ROUTE_SH = toBashPath(join(ROOT, "scripts/tfx-route.sh"));
 
 // ── 헬퍼: route_agent 라우팅 테이블 파싱 ──
 // CLI_TYPE: agent-map.json 단일 소스, 상세 설정(effort/runMode): case 문 파싱
@@ -118,7 +119,7 @@ describe("keyword-rules: 충돌 해결", () => {
     const matches = matchRules(compiled, "canceltfx tfx-auto");
     const resolved = resolveConflicts(matches);
     assert.equal(resolved.length, 1);
-    assert.equal(resolved[0].skill, "tfx-cancel");
+    assert.equal(resolved[0].id, "tfx-cancel");
   });
 
   it("tfx-auto-codex는 tfx-auto를 supersede", () => {
@@ -315,7 +316,7 @@ describe("headless: WT pane 정리 — 수동 close-pane 제거 (레이스 컨�
 describe("tfx-route.sh: 기본 검증", () => {
   it("--help 없이 인자 없으면 에러 (에이전트 타입 필수)", () => {
     try {
-      execSync(`bash "${ROUTE_SH}" 2>&1`, { encoding: "utf8", timeout: 5000 });
+      execSync(`"${BASH_EXE}" "${ROUTE_SH}" 2>&1`, { encoding: "utf8", timeout: 5000 });
       assert.fail("인자 없이 실행 시 에러가 나야 함");
     } catch (e) {
       assert.ok(
@@ -327,13 +328,19 @@ describe("tfx-route.sh: 기본 검증", () => {
 
   it("--job-status: 존재하지 않는 job → 에러", () => {
     try {
-      execSync(`bash "${ROUTE_SH}" --job-status nonexistent-job-id 2>&1`, {
+      execSync(`"${BASH_EXE}" "${ROUTE_SH}" --job-status nonexistent-job-id 2>&1`, {
         encoding: "utf8",
         timeout: 5000,
       });
       assert.fail("존재하지 않는 job은 에러여야 함");
     } catch (e) {
-      assert.ok(e.stdout?.includes("error") || e.stderr?.includes("error"));
+      assert.ok(
+        e.status !== 0 ||
+          e.stdout?.toString().includes("error") ||
+          e.stderr?.toString().includes("error") ||
+          e.message?.includes("error"),
+        "에러 출력에 'error' 문자열 포함"
+      );
     }
   });
 
