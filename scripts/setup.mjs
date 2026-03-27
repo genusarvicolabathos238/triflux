@@ -31,10 +31,32 @@ const BREADCRUMB_PATH = join(CLAUDE_DIR, "scripts", ".tfx-pkg-root");
 
 const REQUIRED_CODEX_PROFILES = [
   {
+    name: "fast",
+    lines: [
+      'model = "gpt-5.3-codex"',
+      'model_reasoning_effort = "low"',
+    ],
+  },
+  {
+    name: "normal",
+    lines: [
+      'model = "gpt-5.3-codex"',
+      'model_reasoning_effort = "medium"',
+    ],
+  },
+  {
     name: "high",
     lines: [
       'model = "gpt-5.3-codex"',
       'model_reasoning_effort = "high"',
+    ],
+  },
+  {
+    name: "thorough",
+    lines: [
+      'model = "gpt-5.3-codex"',
+      'model_reasoning_effort = "high"',
+      'model_temperature = 0.2',
     ],
   },
   {
@@ -49,6 +71,13 @@ const REQUIRED_CODEX_PROFILES = [
     lines: [
       'model = "gpt-5.1-codex-mini"',
       'model_reasoning_effort = "low"',
+    ],
+  },
+  {
+    name: "spark_balanced",
+    lines: [
+      'model = "gpt-5.1-codex-mini"',
+      'model_reasoning_effort = "medium"',
     ],
   },
 ];

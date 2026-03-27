@@ -264,19 +264,23 @@ function trackCliIssue(cliType, agent, stderrText, exitCode) {
 
     const snippet = stderrText.substring(0, 200).replace(/\n/g, " ");
 
-    appendFileSync(
-      issuesFile,
-      JSON.stringify({
-        ts: Date.now(),
-        cli: cliType,
-        agent,
-        pattern: matched.pattern,
-        msg: matched.msg,
-        severity: matched.severity,
-        snippet,
-        resolved: false,
-      }) + "\n",
-    );
+    const retryCount = (matched.pattern === "rate_limit" && cliType === "gemini")
+      ? parseInt(process.env.TFX_GEMINI_429_RETRIES || "0")
+      : undefined;
+
+    const issueEntry = {
+      ts: Date.now(),
+      cli: cliType,
+      agent,
+      pattern: matched.pattern,
+      msg: matched.msg,
+      severity: matched.severity,
+      snippet,
+      resolved: false,
+    };
+    if (retryCount !== undefined) issueEntry.retry_count = retryCount;
+
+    appendFileSync(issuesFile, JSON.stringify(issueEntry) + "\n");
 
     // 자동 회전
     const content = readFileSync(issuesFile, "utf-8").trim();

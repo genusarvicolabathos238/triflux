@@ -54,9 +54,9 @@ describe("GeminiBackend", () => {
     assert.equal(backend.command(), "gemini");
   });
 
-  it("buildArgs — gemini -p ... -o text > result 포함", () => {
+  it("buildArgs — gemini --prompt ... -o text > result 포함", () => {
     const cmd = backend.buildArgs("(Get-Content -Raw '/tmp/p.txt')", "/tmp/r.txt");
-    assert.ok(cmd.includes("gemini -p"), `gemini -p 포함: ${cmd}`);
+    assert.ok(cmd.includes("gemini --prompt"), `gemini --prompt 포함: ${cmd}`);
     assert.ok(cmd.includes("-o text"), `-o text 포함: ${cmd}`);
     assert.ok(cmd.includes("> '/tmp/r.txt'"), `> result 포함: ${cmd}`);
   });
@@ -77,9 +77,9 @@ describe("ClaudeBackend", () => {
     assert.equal(backend.command(), "claude");
   });
 
-  it("buildArgs — claude -p ... --output-format text 포함", () => {
+  it("buildArgs — claude --print ... --output-format text 포함", () => {
     const cmd = backend.buildArgs("(Get-Content -Raw '/tmp/p.txt')", "/tmp/r.txt");
-    assert.ok(cmd.includes("claude -p"), `claude -p 포함: ${cmd}`);
+    assert.ok(cmd.includes("claude --print"), `claude --print 포함: ${cmd}`);
     assert.ok(cmd.includes("--output-format text"), `--output-format text 포함: ${cmd}`);
     assert.ok(cmd.includes("/tmp/r.txt"), `resultFile 포함: ${cmd}`);
   });

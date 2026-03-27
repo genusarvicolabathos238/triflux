@@ -566,12 +566,31 @@ capture_workspace_signature() {
   git status --short --untracked-files=all --ignore-submodules=all 2>/dev/null || return 1
 }
 
+# ── Codex CLI 버전 감지 (캐시) ──
+_CODEX_VERSION=""
+get_codex_version() {
+  if [[ -n "$_CODEX_VERSION" ]]; then echo "$_CODEX_VERSION"; return; fi
+  local raw
+  raw=$("$CODEX_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+  _CODEX_VERSION="${raw:-0.0.0}"
+  echo "$_CODEX_VERSION"
+}
+
+# codex_gte <min_version>: 현재 버전이 min 이상이면 true(0), 아니면 false(1)
+codex_gte() {
+  local min="$1"
+  local cur
+  cur=$(get_codex_version)
+  printf '%s\n%s' "$min" "$cur" | sort -V | head -1 | grep -q "^${min}$"
+}
+
 # ── 라우팅 테이블 ──
 # CLI_TYPE/CLI_CMD: agent-map.json 단일 소스. 상세 설정: 아래 case 문.
 # 반환: CLI_TYPE, CLI_CMD, CLI_ARGS, CLI_EFFORT, DEFAULT_TIMEOUT, RUN_MODE, OPUS_OVERSIGHT
 route_agent() {
   local agent="$1"
   local codex_base="--dangerously-bypass-approvals-and-sandbox --skip-git-repo-check"
+  echo "[tfx-route] Codex 버전: $(get_codex_version)" >&2
   local map_file
   map_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../hub/team/agent-map.json"
   # ── breadcrumb 폴백 (synced 환경: ~/.claude/scripts/) ──
@@ -669,13 +688,20 @@ route_agent() {
       CLI_ARGS="-m gemini-3-flash-preview -y --prompt"
       CLI_EFFORT="flash"; DEFAULT_TIMEOUT=900; RUN_MODE="bg"; OPUS_OVERSIGHT="false" ;;
 
-    # ─── 탐색/검증/테스트 (Claude-native 우선, TFX_NO_CLAUDE_NATIVE=1일 때만 Codex 리매핑) ───
-    explore|verifier|test-engineer|qa-tester)
-      CLI_EFFORT="n/a"; DEFAULT_TIMEOUT=600; RUN_MODE="fg"; OPUS_OVERSIGHT="false"
-      case "$agent" in
-        test-engineer|qa-tester) DEFAULT_TIMEOUT=1200; RUN_MODE="bg" ;;
-      esac
-      ;;
+    # ─── 탐색 (Claude-native: Glob/Grep/Read 직접 접근) ───
+    explore)
+      CLI_EFFORT="n/a"; DEFAULT_TIMEOUT=600; RUN_MODE="fg"; OPUS_OVERSIGHT="false" ;;
+
+    # ─── 검증/테스트 (Codex: 무료 + 파일 쓰기 가능) ───
+    verifier)
+      CLI_ARGS="exec --profile thorough ${codex_base} review"
+      CLI_EFFORT="thorough"; DEFAULT_TIMEOUT=1200; RUN_MODE="fg"; OPUS_OVERSIGHT="false" ;;
+    test-engineer)
+      CLI_ARGS="exec ${codex_base}"
+      CLI_EFFORT="high"; DEFAULT_TIMEOUT=1200; RUN_MODE="bg"; OPUS_OVERSIGHT="false" ;;
+    qa-tester)
+      CLI_ARGS="exec --profile thorough ${codex_base} review"
+      CLI_EFFORT="thorough"; DEFAULT_TIMEOUT=1200; RUN_MODE="bg"; OPUS_OVERSIGHT="false" ;;
 
     # ─── 경량 ───
     spark)
@@ -1108,6 +1134,90 @@ run_stream_worker() {
   return "$exit_code_local"
 }
 
+# Gemini 429 지수 백오프 재시도 래퍼
+# 사용: gemini_with_retry <use_tee_flag> <gemini_args_array_name> <prompt>
+# 429/rate limit 감지 시 최대 3회 재시도 (2→4→8초 백오프)
+_gemini_run_once() {
+  local use_tee_flag="$1"
+  local prompt="$2"
+  shift 2
+  local -a g_args=("$@")
+
+  if [[ "$use_tee_flag" == "true" ]]; then
+    timeout "$TIMEOUT_SEC" "$CLI_CMD" "${g_args[@]}" "$prompt" 2>"$STDERR_LOG" | tee "$STDOUT_LOG" &
+  else
+    timeout "$TIMEOUT_SEC" "$CLI_CMD" "${g_args[@]}" "$prompt" >"$STDOUT_LOG" 2>"$STDERR_LOG" &
+  fi
+  echo "$!"
+}
+
+gemini_with_retry() {
+  local use_tee_flag="$1"
+  local prompt="$2"
+  shift 2
+  local -a g_args=("$@")
+
+  local max_retries=3
+  local attempt=0
+  local delay=2
+  local exit_code_local=0
+
+  while (( attempt < max_retries )); do
+    exit_code_local=0
+    local pid
+    pid=$(_gemini_run_once "$use_tee_flag" "$prompt" "${g_args[@]}")
+
+    local health_ok=true
+    local intervals=(1 2 3 5 8)
+    for wait_sec in "${intervals[@]}"; do
+      sleep "$wait_sec"
+      if [[ -s "$STDOUT_LOG" ]] || [[ -s "$STDERR_LOG" ]]; then
+        break
+      fi
+      if ! kill -0 "$pid" 2>/dev/null; then
+        health_ok=false
+        echo "[tfx-route] Gemini: 출력 없이 프로세스 종료 (${wait_sec}초 체크)" >&2
+        break
+      fi
+    done
+
+    local hb_pid
+    if [[ "$health_ok" == "false" ]]; then
+      wait "$pid" 2>/dev/null
+    else
+      heartbeat_monitor "$pid" &
+      hb_pid=$!
+      wait "$pid" || exit_code_local=$?
+      kill "$hb_pid" 2>/dev/null; wait "$hb_pid" 2>/dev/null
+    fi
+
+    # 성공 시 즉시 반환
+    if [[ $exit_code_local -eq 0 ]]; then
+      return 0
+    fi
+
+    # 429 / rate limit 감지
+    if grep -qiE '429|rate.limit|too many requests' "$STDERR_LOG" 2>/dev/null; then
+      attempt=$(( attempt + 1 ))
+      if (( attempt < max_retries )); then
+        echo "[tfx-route] Gemini 429 감지. ${delay}초 후 재시도 ($attempt/$max_retries)..." >&2
+        sleep "$delay"
+        delay=$(( delay * 2 ))
+        : > "$STDOUT_LOG"
+        : > "$STDERR_LOG"
+        continue
+      else
+        echo "[tfx-route] Gemini 429: ${max_retries}회 재시도 실패" >&2
+      fi
+    fi
+
+    # 비-429 에러 또는 최대 재시도 초과 시 즉시 반환
+    return "$exit_code_local"
+  done
+
+  return "$exit_code_local"
+}
+
 run_legacy_gemini() {
   local prompt="$1"
   local use_tee_flag="$2"
@@ -1133,45 +1243,7 @@ run_legacy_gemini() {
     fi
   fi
 
-  if [[ "$use_tee_flag" == "true" ]]; then
-    timeout "$TIMEOUT_SEC" "$CLI_CMD" "${gemini_args[@]}" "$prompt" 2>"$STDERR_LOG" | tee "$STDOUT_LOG" &
-  else
-    timeout "$TIMEOUT_SEC" "$CLI_CMD" "${gemini_args[@]}" "$prompt" >"$STDOUT_LOG" 2>"$STDERR_LOG" &
-  fi
-  local pid=$!
-
-  local health_ok=true
-  local intervals=(1 2 3 5 8)
-  for wait_sec in "${intervals[@]}"; do
-    sleep "$wait_sec"
-    if [[ -s "$STDOUT_LOG" ]] || [[ -s "$STDERR_LOG" ]]; then
-      break
-    fi
-    if ! kill -0 "$pid" 2>/dev/null; then
-      health_ok=false
-      echo "[tfx-route] Gemini: 출력 없이 프로세스 종료 (${wait_sec}초 체크)" >&2
-      break
-    fi
-  done
-
-  local exit_code_local=0
-  local hb_pid
-  if [[ "$health_ok" == "false" ]]; then
-    wait "$pid" 2>/dev/null
-    echo "[tfx-route] Gemini crash 감지, 재시도 중..." >&2
-    if [[ "$use_tee_flag" == "true" ]]; then
-      timeout "$TIMEOUT_SEC" "$CLI_CMD" "${gemini_args[@]}" "$prompt" 2>"$STDERR_LOG" | tee "$STDOUT_LOG" &
-    else
-      timeout "$TIMEOUT_SEC" "$CLI_CMD" "${gemini_args[@]}" "$prompt" >"$STDOUT_LOG" 2>"$STDERR_LOG" &
-    fi
-    pid=$!
-  fi
-
-  heartbeat_monitor "$pid" &
-  hb_pid=$!
-  wait "$pid" || exit_code_local=$?
-  kill "$hb_pid" 2>/dev/null; wait "$hb_pid" 2>/dev/null
-  return "$exit_code_local"
+  gemini_with_retry "$use_tee_flag" "$prompt" "${gemini_args[@]}"
 }
 
 resolve_codex_mcp_script() {

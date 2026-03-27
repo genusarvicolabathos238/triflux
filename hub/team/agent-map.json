@@ -5,6 +5,7 @@
   "scientist": "codex", "scientist-deep": "codex", "document-specialist": "codex",
   "spark": "codex",
   "designer": "gemini", "writer": "gemini",
-  "explore": "claude", "verifier": "claude", "test-engineer": "claude", "qa-tester": "claude",
+  "explore": "claude",
+  "verifier": "codex", "test-engineer": "codex", "qa-tester": "codex",
   "codex": "codex", "gemini": "gemini", "claude": "claude"
 }

@@ -19,7 +19,7 @@ export class CodexBackend {
    */
   buildArgs(prompt, resultFile, opts = {}) {
     const modelFlag = opts.model ? ` --model '${opts.model}'` : "";
-    return `codex exec ${prompt} -o '${resultFile}' --color never${modelFlag}`;
+    return `codex exec --dangerously-bypass-approvals-and-sandbox ${prompt} --output-last-message '${resultFile}' --color never${modelFlag}`;
   }
 
   env() { return {}; }
@@ -30,7 +30,7 @@ export class GeminiBackend {
   command() { return "gemini"; }
 
   buildArgs(prompt, resultFile, opts = {}) {
-    return `gemini -p ${prompt} -o text > '${resultFile}' 2>'${resultFile}.err'`;
+    return `gemini --prompt ${prompt} -o text > '${resultFile}' 2>'${resultFile}.err'`;
   }
 
   env() { return {}; }
@@ -41,7 +41,7 @@ export class ClaudeBackend {
   command() { return "claude"; }
 
   buildArgs(prompt, resultFile, opts = {}) {
-    return `claude -p ${prompt} --output-format text > '${resultFile}' 2>&1`;
+    return `claude --print ${prompt} --output-format text > '${resultFile}' 2>&1`;
   }
 
   env() { return {}; }

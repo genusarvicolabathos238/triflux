@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { detectMultiplexer, tmuxExec } from "./session.mjs";
 import { psmuxExec } from "./psmux.mjs";
+import { FEATURES } from "./codex-compat.mjs";
 
 function quoteArg(value) {
   return `"${String(value).replace(/"/g, '\\"')}"`;
@@ -62,10 +63,13 @@ export function buildCliCommand(cli, options = {}) {
 
   switch (cli) {
     case "codex":
-      // trust 모드에서는 승인/샌드박스 우회 + alt-screen 비활성화
-      return trustMode
-        ? "codex --dangerously-bypass-approvals-and-sandbox --no-alt-screen"
-        : "codex";
+      // trust 모드에서는 exec 서브커맨드(0.117.0+) 또는 구버전 플래그 사용
+      if (trustMode) {
+        return FEATURES.execSubcommand
+          ? "codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check"
+          : "codex --dangerously-bypass-approvals-and-sandbox --no-alt-screen";
+      }
+      return "codex";
     case "gemini":
       // interactive 모드 — MCP는 ~/.gemini/settings.json에 사전 등록
       return "gemini";

@@ -618,6 +618,23 @@ export function startCapture(sessionName, paneNameOrTarget) {
  * @param {string} commandText
  * @returns {{ paneId: string, paneName: string, token: string, logPath: string }}
  */
+/**
+ * CLI 명령(codex/gemini)이 psmux pane의 PowerShell 환경에서 단축 플래그 충돌을
+ * 일으키는 문제를 방지하기 위해 bash -c '...' 로 감싼다.
+ * - codex -o flag → PS -OutVariable/OutBuffer 충돌
+ * - gemini -p flag → PS -ProgressAction/PipelineVariable 충돌
+ * @param {string} cmd
+ * @returns {string}
+ */
+function wrapCliForBash(cmd) {
+  const trimmed = cmd.trimStart();
+  const isCli = /^(codex|gemini)\b/u.test(trimmed);
+  if (!isCli) return cmd;
+  // 단일 따옴표 이스케이프: ' → '\''
+  const escaped = trimmed.replace(/'/g, "'\\''");
+  return `bash -c '${escaped}'`;
+}
+
 export function dispatchCommand(sessionName, paneNameOrTarget, commandText) {
   ensurePsmuxInstalled();
   const pane = resolvePane(sessionName, paneNameOrTarget);
@@ -629,7 +646,8 @@ export function dispatchCommand(sessionName, paneNameOrTarget, commandText) {
   }
 
   const token = randomToken(paneName);
-  const wrapped = `${commandText}; $trifluxExit = if ($null -ne $LASTEXITCODE) { [int]$LASTEXITCODE } else { 0 }; Write-Output "${COMPLETION_PREFIX}${token}:$trifluxExit"`;
+  const safeCommand = wrapCliForBash(commandText);
+  const wrapped = `${safeCommand}; $trifluxExit = if ($null -ne $LASTEXITCODE) { [int]$LASTEXITCODE } else { 0 }; Write-Output "${COMPLETION_PREFIX}${token}:$trifluxExit"`;
 
   sendLiteralToPane(pane.paneId, wrapped, true);
 
