@@ -104,6 +104,11 @@ describe('setup-sync: SYNC_MAP', () => {
     const hasFastSh = SYNC_MAP.some(e => e.label === 'headless-guard-fast.sh');
     assert.ok(hasFastSh, 'SYNC_MAP must include headless-guard-fast.sh');
   });
+
+  it('agent-map.json이 SYNC_MAP에 포함되어 있다', () => {
+    const hasAgentMap = SYNC_MAP.some(e => e.label === 'hub/team/agent-map.json');
+    assert.ok(hasAgentMap, 'SYNC_MAP must include hub/team/agent-map.json');
+  });
 });
 
 describe('setup-sync: dry-run 실행', () => {

@@ -172,6 +172,11 @@ const SYNC_MAP = [
     label: "lib/keyword-rules.mjs",
   },
   {
+    src: join(PLUGIN_ROOT, "hub", "team", "agent-map.json"),
+    dst: join(CLAUDE_DIR, "hub", "team", "agent-map.json"),
+    label: "hub/team/agent-map.json",
+  },
+  {
     src: join(PLUGIN_ROOT, "scripts", "headless-guard.mjs"),
     dst: join(CLAUDE_DIR, "scripts", "headless-guard.mjs"),
     label: "headless-guard.mjs",

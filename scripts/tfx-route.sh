@@ -574,6 +574,10 @@ route_agent() {
   local codex_base="--dangerously-bypass-approvals-and-sandbox --skip-git-repo-check"
   local map_file
   map_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../hub/team/agent-map.json"
+  # ── breadcrumb 폴백 (synced 환경: ~/.claude/scripts/) ──
+  if [[ ! -f "$map_file" && -n "$TFX_PKG_ROOT" ]]; then
+    map_file="$TFX_PKG_ROOT/hub/team/agent-map.json"
+  fi
 
   # ── CLI_TYPE: 단일 소스 (agent-map.json) ──
   local _raw_type
