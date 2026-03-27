@@ -55,3 +55,4 @@ docs/META-*
 docs/HANDOFF-*
 docs/BUGFIX-*
 docs/SESSION-*
+.venv/
