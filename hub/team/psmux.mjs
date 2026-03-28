@@ -675,6 +675,8 @@ export function startCapture(sessionName, paneNameOrTarget) {
  */
 function wrapCliForBash(cmd) {
   const trimmed = cmd.trimStart();
+  // PowerShell 구문(Clear-Host, Get-Content 등)이 포함되면 이미 PowerShell용 — bash 래핑 건너뜀
+  if (/Clear-Host|Get-Content/i.test(trimmed)) return cmd;
   const isCli = /\b(codex|gemini)\b/u.test(trimmed);
   if (!isCli) return cmd;
   // 단일 따옴표 이스케이프: ' → '\''

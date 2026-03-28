@@ -75,8 +75,9 @@ export async function startHeadlessTeam({ sessionId, task, lead, agents, subtask
     }
   }
 
-  // dashboard 모드: tui-viewer가 최종 상태를 캡처할 시간 확보
-  if (dashboard) await new Promise(r => setTimeout(r, 2000));
+  // dashboard 모드: tui-viewer가 최종 상태를 렌더링할 시간 확보
+  // WT pane spawn (~1s) + node 기동 (~500ms) + 첫 폴링 (~500ms) + 렌더 여유
+  if (dashboard) await new Promise(r => setTimeout(r, 5000));
 
   // 세션 정리
   handle.kill();

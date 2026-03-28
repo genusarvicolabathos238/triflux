@@ -11,6 +11,7 @@ import { createLogDashboard } from "./tui.mjs";
 import { processHandoff } from "./handoff.mjs";
 import { statusBadge } from "./ansi.mjs";
 
+
 // ── CLI 인자 파싱 ──
 const args = process.argv.slice(2);
 function argVal(flag) {
@@ -42,15 +43,14 @@ try {
 const MAX_BODY_BYTES = 10240;
 
 // ── TUI 초기화 ──
-// WT pane에서 spawn 시 process.stdout.isTTY=false — WT_SESSION 환경변수로 감지하여 forceTTY
-const isWindowsTerminal = !!process.env.WT_SESSION;
+// WT pane에서 spawn 시 process.stdout.isTTY=false일 수 있음
+// forceTTY 시 alternate screen이 WT pane에서 렌더링 안 되는 문제 → append-only 유지
 const tui = createLogDashboard({
   refreshMs: 0,          // render 루프를 직접 제어
   stream: process.stdout,
   input: process.stdin,
   columns: process.stdout.columns || parseInt(process.env.COLUMNS, 10) || 120,
   layout: LAYOUT,
-  forceTTY: isWindowsTerminal,
 });
 const startTime = Date.now();
 tui.setStartTime(startTime);

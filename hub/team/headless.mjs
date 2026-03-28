@@ -148,16 +148,12 @@ async function dispatchProgressive(sessionName, assignments, opts = {}) {
       : `${brand.emoji} ${resolvedCli}-${i + 1}`;
 
     let newPaneId;
-    if (i === 0) {
-      // 첫 번째 워커: 빈 lead pane 사용
-      newPaneId = `${sessionName}:0.0`;
-    } else {
-      // 2번째+: split-window로 추가
-      newPaneId = psmuxExec([
-        "split-window", "-t", sessionName, "-P", "-F",
-        "#{session_name}:#{window_index}.#{pane_index}",
-      ]);
-    }
+    // 모든 워커를 split-window로 생성 (lead pane index 0은 비워둠)
+    // tui-viewer가 index 0을 건너뛰므로, 워커는 항상 index >= 1에 배치
+    newPaneId = psmuxExec([
+      "split-window", "-t", sessionName, "-P", "-F",
+      "#{session_name}:#{window_index}.#{pane_index}",
+    ]);
 
     // 타이틀 설정 (이모지 포함)
     try { psmuxExec(["select-pane", "-t", newPaneId, "-T", paneTitle]); } catch { /* 무시 */ }

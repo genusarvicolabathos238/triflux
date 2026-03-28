@@ -32,7 +32,7 @@ export class GeminiBackend {
   command() { return "gemini"; }
 
   buildArgs(prompt, resultFile, opts = {}) {
-    return `gemini --prompt ${prompt} --output text > '${resultFile}' 2>'${resultFile}.err'`;
+    return `gemini -p ${prompt} --output-format text > '${resultFile}' 2>'${resultFile}.err'`;
   }
 
   env() { return {}; }
