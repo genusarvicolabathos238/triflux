@@ -4,15 +4,34 @@
 // Usage:
 //   node remote-spawn.mjs --local [--dir <path>] [--prompt "..."] [--handoff <file>]
 //   node remote-spawn.mjs --host <ssh-host> [--dir <path>] [--prompt "..."] [--handoff <file>]
+//   node remote-spawn.mjs --send <session> "prompt"
+//   node remote-spawn.mjs --list
+//   node remote-spawn.mjs --attach <session>
+//   node remote-spawn.mjs --probe <ssh-host>
 
+import { randomUUID } from "crypto";
 import { execFileSync, spawn } from "child_process";
-import { readFileSync, existsSync, statSync, writeFileSync } from "fs";
-import { resolve, join } from "path";
-import { homedir, platform, tmpdir } from "os";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs";
+import { homedir, platform as getPlatform, tmpdir } from "os";
+import { join, posix as posixPath, resolve, win32 as win32Path } from "path";
+import {
+  attachPsmuxSession,
+  capturePsmuxPane,
+  createPsmuxSession,
+  hasPsmux,
+  listPsmuxSessions,
+  psmuxExec,
+  psmuxSessionExists,
+  sendKeysToPane,
+  startCapture,
+  waitForPattern,
+} from "../hub/team/psmux.mjs";
 
 const MAX_HANDOFF_BYTES = 1 * 1024 * 1024; // 1 MB
-
-// ── 입력 검증 ──
+const REMOTE_ENV_TTL_MS = 86_400_000;
+const REMOTE_ENV_CACHE_DIR = resolve(".omc", "state", "remote-env");
+const SSH_PROMPT_PATTERN = /(\$|%|#|PS |>)\s*$/;
+const IS_WINDOWS_LOCAL = getPlatform() === "win32";
 
 const SAFE_HOST_RE = /^[a-zA-Z0-9._-]+$/;
 const SAFE_DIR_RE = /^[a-zA-Z0-9_.~\/:\\-]+$/;
@@ -33,59 +52,147 @@ function validateDir(dir) {
   return dir;
 }
 
-function shellQuote(s) {
-  return "'" + s.replace(/'/g, "'\\''") + "'";
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
-// ── CLI 파싱 ──
+function escapePwshSingleQuoted(value) {
+  return String(value).replace(/'/g, "''");
+}
+
+function escapePwshDoubleQuoted(value) {
+  return String(value).replace(/`/g, "``").replace(/"/g, '`"');
+}
+
+function normalizeCommandPath(value) {
+  return String(value).replace(/\\/g, "/");
+}
+
+function sleepMs(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, ms));
+}
+
+function usageText() {
+  return `Usage:
+  remote-spawn --local [--dir <path>] [--prompt "task"] [--handoff <file>]
+  remote-spawn --host <ssh-host> [--dir <path>] [--prompt "task"] [--handoff <file>]
+  remote-spawn --send <session> "prompt"
+  remote-spawn --list
+  remote-spawn --attach <session>
+  remote-spawn --probe <ssh-host>
+
+Options:
+  --local          로컬 WT 탭에서 Claude 실행
+  --host <name>    SSH 호스트로 원격 Claude 실행
+  --dir <path>     작업 디렉토리 (기본: 현재 디렉토리 / 원격 홈)
+  --prompt "..."   Claude에 전달할 첫 메시지
+  --handoff <file> 핸드오프 파일 경로 (prompt와 결합 가능)
+  --send <session> 실행 중인 세션에 프롬프트 전송
+  --list           tfx-spawn-* psmux 세션 목록
+  --attach <name>  WT 새 탭에서 세션 attach
+  --probe <host>   SSH 원격 환경 강제 프로브 + 캐시 갱신`;
+}
 
 function parseArgs(argv) {
-  const args = { host: null, dir: null, prompt: null, handoff: null, local: false };
-  for (let i = 2; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--local") { args.local = true; continue; }
-    if (a === "--host" && argv[i + 1]) { args.host = validateHost(argv[++i]); continue; }
-    if (a === "--dir" && argv[i + 1]) { args.dir = validateDir(argv[++i]); continue; }
-    if (a === "--prompt" && argv[i + 1]) { args.prompt = argv[++i]; continue; }
-    if (a === "--handoff" && argv[i + 1]) { args.handoff = argv[++i]; continue; }
-    // 미지정 인자는 prompt로 처리
-    if (!args.prompt) args.prompt = a;
+  let command = "spawn";
+  let host = null;
+  let dir = null;
+  let prompt = null;
+  let handoff = null;
+  let local = false;
+  let sessionName = null;
+  let probeHost = null;
+  const promptParts = [];
+
+  for (let index = 2; index < argv.length; index += 1) {
+    const arg = argv[index];
+
+    if (arg === "--local") {
+      local = true;
+      continue;
+    }
+    if (arg === "--host" && argv[index + 1]) {
+      host = validateHost(argv[index + 1]);
+      index += 1;
+      continue;
+    }
+    if (arg === "--dir" && argv[index + 1]) {
+      dir = validateDir(argv[index + 1]);
+      index += 1;
+      continue;
+    }
+    if (arg === "--prompt" && argv[index + 1]) {
+      prompt = argv[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--handoff" && argv[index + 1]) {
+      handoff = argv[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--send" && argv[index + 1]) {
+      command = "send";
+      sessionName = argv[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--list") {
+      command = "list";
+      continue;
+    }
+    if (arg === "--attach" && argv[index + 1]) {
+      command = "attach";
+      sessionName = argv[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--probe" && argv[index + 1]) {
+      command = "probe";
+      probeHost = validateHost(argv[index + 1]);
+      index += 1;
+      continue;
+    }
+
+    promptParts.push(arg);
   }
-  return args;
+
+  const mergedPrompt = prompt ?? (promptParts.length > 0 ? promptParts.join(" ") : null);
+  return {
+    command,
+    dir,
+    handoff,
+    host,
+    local,
+    probeHost,
+    prompt: mergedPrompt,
+    sessionName,
+  };
 }
 
-// ── Claude 실행 경로 감지 ──
-
 function detectClaudePath() {
-  // 1. 환경변수 오버라이드
   if (process.env.CLAUDE_BIN_PATH) return process.env.CLAUDE_BIN_PATH;
 
-  // 2. WinGet Links
   const wingetPath = join(homedir(), "AppData", "Local", "Microsoft", "WinGet", "Links", "claude.exe");
   if (existsSync(wingetPath)) return wingetPath;
 
-  // 3. npm global
   const npmPath = join(process.env.APPDATA || "", "npm", "claude.cmd");
   if (existsSync(npmPath)) return npmPath;
 
-  // 3. PATH에서 찾기
   try {
-    const cmd = platform() === "win32" ? "where" : "which";
-    const result = execFileSync(cmd, ["claude"], { encoding: "utf8", timeout: 5000 }).trim();
-    if (result) return result.split("\n")[0].trim();
-  } catch { /* not found */ }
+    const command = IS_WINDOWS_LOCAL ? "where" : "which";
+    const result = execFileSync(command, ["claude"], { encoding: "utf8", timeout: 5000 }).trim();
+    if (result) return result.split(/\r?\n/u)[0].trim();
+  } catch {
+    // not found
+  }
 
-  return "claude"; // fallback — PATH에 있다고 가정
+  return "claude";
 }
-
-// ── 권한 플래그 ──
 
 function getPermissionFlag() {
-  if (process.env.TFX_CLAUDE_SAFE_MODE === "1") return [];
-  return ["--dangerously-skip-permissions"];
+  return process.env.TFX_CLAUDE_SAFE_MODE === "1" ? [] : ["--dangerously-skip-permissions"];
 }
-
-// ── 핸드오프 컨텐츠 생성 ──
 
 function buildPrompt(args) {
   let content = "";
@@ -111,13 +218,10 @@ function buildPrompt(args) {
   return content;
 }
 
-// ── 로컬 Spawn (WT 탭) ──
-
-function spawnLocal(args, claudePath, prompt) {
+function spawnLocalFallback(args, claudePath, prompt) {
   const dir = args.dir ? resolve(args.dir) : process.cwd();
 
-  if (platform() !== "win32") {
-    // Linux/macOS: 직접 실행
+  if (!IS_WINDOWS_LOCAL) {
     const cliArgs = [...getPermissionFlag()];
     if (prompt) cliArgs.push(prompt);
 
@@ -129,15 +233,15 @@ function spawnLocal(args, claudePath, prompt) {
     return;
   }
 
-  // Windows: wt.exe new-tab
   const wtArgs = ["new-tab", "-d", dir, "--"];
   const claudeForward = claudePath.replace(/\\/g, "/");
 
   if (prompt) {
-    // pwsh single-quote: 내부 ' → '' 이스케이프
-    const psQuoted = "'" + prompt.replace(/'/g, "''") + "'";
+    const psQuoted = `'${prompt.replace(/'/g, "''")}'`;
     wtArgs.push(
-      "pwsh", "-NoProfile", "-Command",
+      "pwsh",
+      "-NoProfile",
+      "-Command",
       `& '${claudeForward}' ${getPermissionFlag().join(" ")} ${psQuoted}`,
     );
   } else {
@@ -147,15 +251,13 @@ function spawnLocal(args, claudePath, prompt) {
   try {
     spawn("wt.exe", wtArgs, { detached: true, stdio: "ignore", windowsHide: false }).unref();
     console.log(`spawned local Claude in WT tab → ${dir}`);
-  } catch (err) {
-    console.error("wt.exe spawn failed:", err.message);
+  } catch (error) {
+    console.error("wt.exe spawn failed:", error.message);
     process.exit(1);
   }
 }
 
-// ── 원격 Spawn (SSH) ──
-
-function spawnRemote(args, prompt) {
+function spawnRemoteFallback(args, prompt) {
   const { host } = args;
   if (!host) {
     console.error("--host required for remote spawn");
@@ -164,51 +266,55 @@ function spawnRemote(args, prompt) {
 
   const dir = args.dir || "~";
   const permFlags = getPermissionFlag();
-
-  // 전략: 원격에 .ps1 스크립트 파일 작성 → pwsh -NoExit -File로 실행
-  // 인라인 쿼팅 지옥 완전 회피
   const scriptLines = [
     `cd '${dir.replace(/'/g, "''")}'`,
   ];
+
   if (prompt) {
     const safePrompt = prompt.replace(/'/g, "''");
     scriptLines.push(`& "$env:USERPROFILE\\.local\\bin\\claude.exe" ${permFlags.join(" ")} '${safePrompt}'`);
   } else {
     scriptLines.push(`& "$env:USERPROFILE\\.local\\bin\\claude.exe" ${permFlags.join(" ")}`);
   }
-  const scriptContent = scriptLines.join("\n");
 
-  // 1단계: 로컬 임시파일에 스크립트 작성 → scp로 원격 홈에 전송
+  const scriptContent = scriptLines.join("\n");
   const localScript = join(tmpdir(), "tfx-remote-spawn.ps1");
   writeFileSync(localScript, scriptContent, "utf8");
 
   try {
     execFileSync("scp", [localScript, `${host}:tfx-remote-spawn.ps1`], { timeout: 10000, stdio: "pipe" });
-  } catch (err) {
-    console.error("failed to copy script to remote:", err.message);
+  } catch (error) {
+    console.error("failed to copy script to remote:", error.message);
     process.exit(1);
   }
 
-  // 2단계: 원격 홈 디렉토리 절대경로 취득 → WT에서 ~ 확장 안 되므로
   let remoteHome;
   try {
     remoteHome = execFileSync("ssh", [host, "echo", "$env:USERPROFILE"], { encoding: "utf8", timeout: 5000 }).trim();
   } catch {
-    remoteHome = "C:\\Users\\" + host; // fallback
+    remoteHome = `C:\\Users\\${host}`;
   }
-  const remoteScript = remoteHome.replace(/\\/g, "/") + "/tfx-remote-spawn.ps1";
+
+  const remoteScript = `${remoteHome.replace(/\\/g, "/")}/tfx-remote-spawn.ps1`;
   const remoteCmd = `pwsh -NoExit -File ${remoteScript}`;
 
-  if (platform() === "win32") {
+  if (IS_WINDOWS_LOCAL) {
     const wtArgs = [
-      "new-tab", "--title", `Claude@${host}`, "--",
-      "ssh", "-t", "--", host, remoteCmd,
+      "new-tab",
+      "--title",
+      `Claude@${host}`,
+      "--",
+      "ssh",
+      "-t",
+      "--",
+      host,
+      remoteCmd,
     ];
     try {
       spawn("wt.exe", wtArgs, { detached: true, stdio: "ignore", windowsHide: false }).unref();
       console.log(`spawned remote Claude → ${host}:${dir}`);
-    } catch (err) {
-      console.error("wt.exe spawn failed:", err.message);
+    } catch (error) {
+      console.error("wt.exe spawn failed:", error.message);
       process.exit(1);
     }
   } else {
@@ -217,33 +323,397 @@ function spawnRemote(args, prompt) {
   }
 }
 
-// ── main ──
+function shouldUsePsmux() {
+  return IS_WINDOWS_LOCAL && hasPsmux();
+}
 
-function main() {
-  const args = parseArgs(process.argv);
-
-  if (!args.local && !args.host) {
-    console.log(`Usage:
-  remote-spawn --local [--dir <path>] [--prompt "task"] [--handoff <file>]
-  remote-spawn --host <ssh-host> [--dir <path>] [--prompt "task"] [--handoff <file>]
-
-Options:
-  --local          로컬 WT 탭에서 Claude 실행
-  --host <name>    SSH 호스트로 원격 Claude 실행
-  --dir <path>     작업 디렉토리 (기본: 현재 디렉토리 / ~)
-  --prompt "..."   Claude에 전달할 첫 메시지
-  --handoff <file> 핸드오프 파일 경로 (prompt와 결합 가능)`);
-    process.exit(0);
-  }
-
-  const prompt = buildPrompt(args);
-  const claudePath = detectClaudePath();
-
-  if (args.local) {
-    spawnLocal(args, claudePath, prompt);
-  } else {
-    spawnRemote(args, prompt);
+function requirePsmux() {
+  if (!hasPsmux()) {
+    throw new Error("psmux is required for this command");
   }
 }
 
-main();
+function parseProbeLines(text) {
+  return Object.fromEntries(
+    text
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const separatorIndex = line.indexOf("=");
+        return separatorIndex === -1
+          ? null
+          : [line.slice(0, separatorIndex), line.slice(separatorIndex + 1)];
+      })
+      .filter(Boolean),
+  );
+}
+
+function normalizePwshProbeEnv(host, parsed) {
+  if (parsed.shell !== "pwsh" || parsed.os !== "win32") {
+    return null;
+  }
+
+  if (!parsed.home) {
+    return null;
+  }
+
+  return Object.freeze({
+    claudePath: (!parsed.claude || parsed.claude === "notfound") ? null : parsed.claude,
+    home: parsed.home,
+    os: "win32",
+    shell: "pwsh",
+  });
+}
+
+function normalizePosixProbeEnv(host, parsed) {
+  const os = parsed.os === "darwin" ? "darwin" : parsed.os === "linux" ? "linux" : null;
+  if (!os || !parsed.home) {
+    return null;
+  }
+
+  return Object.freeze({
+    claudePath: (!parsed.claude || parsed.claude === "notfound") ? null : parsed.claude,
+    home: parsed.home,
+    os,
+    shell: parsed.shell === "zsh" ? "zsh" : "bash",
+  });
+}
+
+function getRemoteEnvCachePath(host) {
+  return join(REMOTE_ENV_CACHE_DIR, `${host}.json`);
+}
+
+function readRemoteEnvCache(host) {
+  const cachePath = getRemoteEnvCachePath(host);
+  if (!existsSync(cachePath)) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(cachePath, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isRemoteEnvCacheFresh(cacheEntry) {
+  return Boolean(
+    cacheEntry
+    && typeof cacheEntry.cachedAt === "number"
+    && cacheEntry.env
+    && (Date.now() - cacheEntry.cachedAt) < REMOTE_ENV_TTL_MS,
+  );
+}
+
+function writeRemoteEnvCache(host, env) {
+  mkdirSync(REMOTE_ENV_CACHE_DIR, { recursive: true });
+  writeFileSync(
+    getRemoteEnvCachePath(host),
+    JSON.stringify({ cachedAt: Date.now(), env }, null, 2),
+    "utf8",
+  );
+}
+
+function probeRemoteEnvViaPwsh(host) {
+  const command = [
+    "Write-Output 'shell=pwsh'",
+    'Write-Output "home=$env:USERPROFILE"',
+    'if (Test-Path "$env:USERPROFILE\\.local\\bin\\claude.exe") { Write-Output "claude=$env:USERPROFILE\\.local\\bin\\claude.exe" } elseif (Get-Command claude -ErrorAction SilentlyContinue) { Write-Output "claude=$((Get-Command claude).Source)" } else { Write-Output \'claude=notfound\' }',
+    'Write-Output "os=$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows) ? \'win32\' : \'other\')"',
+  ].join("; ");
+
+  let output;
+  try {
+    output = execFileSync(
+      "ssh",
+      [host, "pwsh", "-NoProfile", "-Command", command],
+      { encoding: "utf8", timeout: 15000, stdio: ["pipe", "pipe", "pipe"] },
+    );
+  } catch {
+    return null;
+  }
+
+  return normalizePwshProbeEnv(host, parseProbeLines(output));
+}
+
+function probeRemoteEnvViaPosix(host) {
+  const script = [
+    "echo shell=$(basename $SHELL)",
+    "echo home=$HOME",
+    "command -v claude >/dev/null 2>&1 && echo claude=$(command -v claude) || echo claude=notfound",
+    "echo os=$(uname -s | tr A-Z a-z)",
+  ].join("\n");
+
+  let output;
+  try {
+    output = execFileSync("ssh", [host, "sh"], {
+      encoding: "utf8",
+      timeout: 15000,
+      input: script,
+    });
+  } catch {
+    return null;
+  }
+
+  return normalizePosixProbeEnv(host, parseProbeLines(output));
+}
+
+function probeRemoteEnv(host, opts = {}) {
+  const force = opts.force === true;
+
+  if (!force) {
+    const cached = readRemoteEnvCache(host);
+    if (isRemoteEnvCacheFresh(cached)) {
+      return cached.env;
+    }
+  }
+
+  const pwshEnv = probeRemoteEnvViaPwsh(host);
+  if (pwshEnv) {
+    writeRemoteEnvCache(host, pwshEnv);
+    return pwshEnv;
+  }
+
+  const posixEnv = probeRemoteEnvViaPosix(host);
+  if (posixEnv) {
+    writeRemoteEnvCache(host, posixEnv);
+    return posixEnv;
+  }
+
+  throw new Error(`remote probe failed for ${host}`);
+}
+
+function isWindowsAbsolutePath(value) {
+  return /^[a-zA-Z]:[\\/]/u.test(value) || value.startsWith("\\\\");
+}
+
+function resolveRemoteDir(dir, env) {
+  const requestedDir = dir || env.home;
+
+  if (env.os === "win32") {
+    const winDir = requestedDir.replace(/\//g, "\\");
+    if (winDir === "~") return env.home;
+    if (/^~[\\/]/u.test(winDir)) return win32Path.join(env.home, winDir.slice(2));
+    if (isWindowsAbsolutePath(winDir)) return winDir;
+    return win32Path.join(env.home, winDir);
+  }
+
+  if (requestedDir === "~") return env.home;
+  if (requestedDir.startsWith("~/")) return posixPath.join(env.home, requestedDir.slice(2));
+  if (requestedDir.startsWith("/")) return requestedDir;
+  return posixPath.join(env.home, requestedDir);
+}
+
+function listSessionNamesFromRawOutput(output) {
+  return output
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.split(":")[0]?.trim())
+    .filter(Boolean);
+}
+
+function listSpawnSessions() {
+  const helperSessions = listPsmuxSessions().filter((name) => name.startsWith("tfx-spawn-"));
+  if (helperSessions.length > 0) {
+    return helperSessions;
+  }
+
+  try {
+    return listSessionNamesFromRawOutput(psmuxExec(["list-sessions"]))
+      .filter((name) => name.startsWith("tfx-spawn-"));
+  } catch {
+    return [];
+  }
+}
+
+function openAttachTab(sessionName, title = null) {
+  if (IS_WINDOWS_LOCAL) {
+    const wtArgs = title
+      ? ["new-tab", "--title", title, "--", "psmux", "attach", "-t", sessionName]
+      : ["new-tab", "--", "psmux", "attach", "-t", sessionName];
+    spawn("wt.exe", wtArgs, { detached: true, stdio: "ignore", windowsHide: false }).unref();
+    return;
+  }
+
+  attachPsmuxSession(sessionName);
+}
+
+function getLastNonEmptyLine(text) {
+  const lines = String(text)
+    .split(/\r?\n/u)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim().length > 0);
+  return lines.at(-1) || "";
+}
+
+async function waitForRemotePrompt(sessionName, paneId) {
+  const baseline = capturePsmuxPane(paneId, 20);
+  const capture = startCapture(sessionName, paneId);
+  const deadline = Date.now() + 15_000;
+
+  while (Date.now() <= deadline) {
+    const remainingMs = Math.max(250, deadline - Date.now());
+    await waitForPattern(
+      sessionName,
+      paneId,
+      SSH_PROMPT_PATTERN,
+      Math.min(1, remainingMs / 1000),
+      { logPath: capture.logPath },
+    );
+
+    const tail = capturePsmuxPane(paneId, 20);
+    const lastLine = getLastNonEmptyLine(tail);
+    if (tail !== baseline && SSH_PROMPT_PATTERN.test(lastLine)) {
+      return;
+    }
+  }
+
+  throw new Error(`ssh prompt wait timed out for ${sessionName}: ${capturePsmuxPane(paneId, 20)}`);
+}
+
+function spawnLocal(args, claudePath, prompt) {
+  if (!shouldUsePsmux()) {
+    spawnLocalFallback(args, claudePath, prompt);
+    return;
+  }
+
+  const dir = args.dir ? resolve(args.dir) : process.cwd();
+  const sessionName = `tfx-spawn-${randomUUID().slice(0, 8)}`;
+  const paneId = `${sessionName}:0.0`;
+  const permissionFlags = getPermissionFlag().join(" ");
+  const command = `& '${escapePwshSingleQuoted(normalizeCommandPath(claudePath))}'${permissionFlags ? ` ${permissionFlags}` : ""}`;
+
+  createPsmuxSession(sessionName, { layout: "1xN", paneCount: 1 });
+  sendKeysToPane(paneId, `cd '${escapePwshSingleQuoted(dir)}'`);
+  sleepMs(500);
+  sendKeysToPane(paneId, command);
+  if (prompt) {
+    sleepMs(2000);
+    sendKeysToPane(paneId, prompt);
+  }
+  openAttachTab(sessionName, "Claude@local");
+  console.log(sessionName);
+}
+
+async function spawnRemote(args, prompt) {
+  const { host } = args;
+  if (!host) {
+    console.error("--host required for remote spawn");
+    process.exit(1);
+  }
+
+  if (!shouldUsePsmux()) {
+    spawnRemoteFallback(args, prompt);
+    return;
+  }
+
+  const env = probeRemoteEnv(host);
+  if (!env.claudePath) {
+    console.error(`claude not found on ${host}. Install Claude Code on the remote host first.`);
+    process.exit(1);
+  }
+  const resolvedDir = resolveRemoteDir(args.dir, env);
+  const sessionName = `tfx-spawn-${host}-${randomUUID().slice(0, 8)}`;
+  const paneId = `${sessionName}:0.0`;
+  const permissionFlags = getPermissionFlag().join(" ");
+
+  createPsmuxSession(sessionName, { layout: "1xN", paneCount: 1 });
+  sendKeysToPane(paneId, `ssh -t ${host}`);
+  await waitForRemotePrompt(sessionName, paneId);
+
+  if (env.shell === "pwsh") {
+    const claudeCommand = `& "${escapePwshDoubleQuoted(env.claudePath)}"${permissionFlags ? ` ${permissionFlags}` : ""}`;
+    sendKeysToPane(paneId, `cd '${escapePwshSingleQuoted(resolvedDir)}'`);
+    sendKeysToPane(paneId, claudeCommand);
+  } else {
+    const claudeCommand = `${shellQuote(env.claudePath)}${permissionFlags ? ` ${permissionFlags}` : ""}`;
+    sendKeysToPane(paneId, `cd ${shellQuote(resolvedDir)}`);
+    sendKeysToPane(paneId, claudeCommand);
+  }
+
+  if (prompt) {
+    sleepMs(2000);
+    sendKeysToPane(paneId, prompt);
+  }
+
+  openAttachTab(sessionName, `Claude@${host}`);
+  console.log(sessionName);
+}
+
+function sendPromptToSession(sessionName, prompt) {
+  requirePsmux();
+  if (!psmuxSessionExists(sessionName)) {
+    throw new Error(`psmux session not found: ${sessionName}`);
+  }
+  sendKeysToPane(`${sessionName}:0.0`, prompt);
+}
+
+function attachSession(sessionName) {
+  requirePsmux();
+  if (!psmuxSessionExists(sessionName)) {
+    throw new Error(`psmux session not found: ${sessionName}`);
+  }
+  openAttachTab(sessionName);
+}
+
+async function main() {
+  const args = parseArgs(process.argv);
+
+  if (args.command === "list") {
+    console.log(listSpawnSessions().join("\n"));
+    return;
+  }
+
+  if (args.command === "attach") {
+    if (!args.sessionName) {
+      console.error("--attach requires a session name");
+      process.exit(1);
+    }
+    attachSession(args.sessionName);
+    return;
+  }
+
+  if (args.command === "probe") {
+    if (!args.probeHost) {
+      console.error("--probe requires a host");
+      process.exit(1);
+    }
+    console.log(JSON.stringify(probeRemoteEnv(args.probeHost, { force: true }), null, 2));
+    return;
+  }
+
+  const prompt = buildPrompt(args);
+
+  if (args.command === "send") {
+    if (!args.sessionName) {
+      console.error("--send requires a session name");
+      process.exit(1);
+    }
+    if (!prompt) {
+      console.error("--send requires a prompt or --handoff");
+      process.exit(1);
+    }
+    sendPromptToSession(args.sessionName, prompt);
+    return;
+  }
+
+  if (!args.local && !args.host) {
+    console.log(usageText());
+    return;
+  }
+
+  if (args.local) {
+    spawnLocal(args, detectClaudePath(), prompt);
+    return;
+  }
+
+  await spawnRemote(args, prompt);
+}
+
+main().catch((error) => {
+  console.error(error?.message || String(error));
+  process.exit(1);
+});

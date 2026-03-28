@@ -302,6 +302,13 @@ function sendLiteralToPane(paneId, text, submit = true) {
   }
 }
 
+export function sendKeysToPane(paneId, text, submit = true) {
+  psmuxExec(["send-keys", "-t", paneId, "-l", text]);
+  if (submit) {
+    psmuxExec(["send-keys", "-t", paneId, "Enter"]);
+  }
+}
+
 function toPatternRegExp(pattern) {
   if (pattern instanceof RegExp) {
     const flags = pattern.flags.includes("m") ? pattern.flags : `${pattern.flags}m`;

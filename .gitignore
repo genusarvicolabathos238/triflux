@@ -56,3 +56,6 @@ docs/HANDOFF-*
 docs/BUGFIX-*
 docs/SESSION-*
 .venv/
+
+# 개인 호스트 설정 (커밋 금지)
+skills/remote-spawn/references/hosts.json
