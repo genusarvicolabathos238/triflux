@@ -454,10 +454,50 @@ export function createPsmuxSession(sessionName, opts = {}) {
 }
 
 /**
+ * psmux 세션의 모든 pane PID를 수집
+ * @param {string} sessionName
+ * @returns {number[]}
+ */
+function collectPanePids(sessionName) {
+  try {
+    const output = psmuxExec([
+      "list-panes", "-t", sessionName, "-F", "#{pane_pid}",
+    ]);
+    return output
+      .split(/\r?\n/)
+      .map((l) => Number.parseInt(l.trim(), 10))
+      .filter((pid) => Number.isFinite(pid) && pid > 0);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Windows 프로세스 트리 강제 종료 (taskkill /T /F)
+ * @param {number} pid
+ */
+function killProcessTree(pid) {
+  if (!IS_WINDOWS || !pid) return;
+  try {
+    childProcess.execSync(`taskkill /T /F /PID ${pid}`, {
+      stdio: "ignore",
+      timeout: 5000,
+    });
+  } catch {
+    // 이미 종료된 프로세스 — 무시
+  }
+}
+
+/**
  * psmux 세션 종료
  * @param {string} sessionName
  */
 export function killPsmuxSession(sessionName) {
+  // Windows: pane 프로세스 트리를 먼저 정리 (MCP 서버 좀비 방지)
+  const pids = collectPanePids(sessionName);
+  for (const pid of pids) {
+    killProcessTree(pid);
+  }
   try {
     psmuxExec(["kill-session", "-t", sessionName], { stdio: "ignore" });
   } catch {
@@ -868,6 +908,15 @@ export function killWorker(sessionName, workerName) {
   }
   try {
     const { paneId, status } = getWorkerStatus(sessionName, workerName);
+
+    // pane PID 수집 → 프로세스 트리 정리 (MCP 서버 좀비 방지)
+    try {
+      const pidOutput = psmuxExec(["list-panes", "-t", paneId, "-F", "#{pane_pid}"]);
+      const pid = Number.parseInt(pidOutput.trim(), 10);
+      if (Number.isFinite(pid) && pid > 0) killProcessTree(pid);
+    } catch {
+      // PID 조회 실패 — 아래에서 pane만 정리
+    }
 
     // 이미 종료된 워커 → pane 정리만 수행
     if (status === "exited") {
