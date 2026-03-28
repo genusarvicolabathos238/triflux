@@ -2,13 +2,17 @@
 // 프로세스 관련 공유 유틸리티
 
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 const CLEANUP_SCRIPT_DIR = join(tmpdir(), "tfx-process-utils");
-const CLEANUP_SCRIPT_PATH = join(CLEANUP_SCRIPT_DIR, "cleanup-orphans.ps1");
+const SCAN_SCRIPT_PATH = join(CLEANUP_SCRIPT_DIR, "scan-processes.ps1");
 const TREE_SCRIPT_PATH = join(CLEANUP_SCRIPT_DIR, "get-ancestor-tree.ps1");
+
+// 스크립트 버전 — 내용 변경 시 증가하여 캐시된 스크립트를 갱신
+const SCRIPT_VERSION = 2;
+const VERSION_FILE = join(CLEANUP_SCRIPT_DIR, ".version");
 
 /**
  * 주어진 PID의 프로세스가 살아있는지 확인한다.
@@ -35,35 +39,96 @@ export function isPidAlive(pid) {
 function ensureHelperScripts() {
   mkdirSync(CLEANUP_SCRIPT_DIR, { recursive: true });
 
-  if (!existsSync(TREE_SCRIPT_PATH)) {
-    writeFileSync(TREE_SCRIPT_PATH, `
-param([int]$StartPid)
-$p = $StartPid
-for ($i = 0; $i -lt 10; $i++) {
-    if ($p -le 0) { break }
-    Write-Output $p
-    $parent = (Get-CimInstance Win32_Process -Filter "ProcessId=$p" -ErrorAction SilentlyContinue).ParentProcessId
-    if ($null -eq $parent -or $parent -le 0) { break }
-    $p = $parent
-}
-`, "utf8");
+  // 버전 체크 — 스크립트 갱신 필요 여부
+  let needsUpdate = true;
+  try {
+    if (existsSync(VERSION_FILE)) {
+      const cached = Number.parseInt(readFileSync(VERSION_FILE, "utf8").trim(), 10);
+      if (cached === SCRIPT_VERSION) needsUpdate = false;
+    }
+  } catch {}
+
+  if (needsUpdate) {
+    // 기존 스크립트 삭제 후 재생성
+    try { unlinkSync(SCAN_SCRIPT_PATH); } catch {}
+    try { unlinkSync(TREE_SCRIPT_PATH); } catch {}
   }
 
-  if (!existsSync(CLEANUP_SCRIPT_PATH)) {
-    writeFileSync(CLEANUP_SCRIPT_PATH, `
-$ErrorActionPreference = 'SilentlyContinue'
-Get-CimInstance Win32_Process -Filter "Name='node.exe'" | ForEach-Object {
-    Write-Output "$($_.ProcessId),$($_.ParentProcessId)"
-}
-`, "utf8");
+  if (!existsSync(TREE_SCRIPT_PATH)) {
+    writeFileSync(TREE_SCRIPT_PATH, [
+      "param([int]$StartPid)",
+      "$p = $StartPid",
+      "for ($i = 0; $i -lt 10; $i++) {",
+      "    if ($p -le 0) { break }",
+      "    Write-Output $p",
+      '    $parent = (Get-CimInstance Win32_Process -Filter "ProcessId=$p" -ErrorAction SilentlyContinue).ParentProcessId',
+      "    if ($null -eq $parent -or $parent -le 0) { break }",
+      "    $p = $parent",
+      "}",
+    ].join("\n"), "utf8");
+  }
+
+  if (!existsSync(SCAN_SCRIPT_PATH)) {
+    // node.exe + bash.exe + cmd.exe 전체를 스캔하여 PID,ParentPID,Name 출력
+    writeFileSync(SCAN_SCRIPT_PATH, [
+      "$ErrorActionPreference = 'SilentlyContinue'",
+      "Get-CimInstance Win32_Process -Filter \"Name='node.exe' OR Name='bash.exe' OR Name='cmd.exe'\" | ForEach-Object {",
+      '    Write-Output "$($_.ProcessId),$($_.ParentProcessId),$($_.Name)"',
+      "}",
+    ].join("\n"), "utf8");
+  }
+
+  if (needsUpdate) {
+    writeFileSync(VERSION_FILE, String(SCRIPT_VERSION), "utf8");
   }
 }
 
 /**
- * 부모 프로세스가 죽은 고아 node.exe 프로세스를 정리한다.
- * Windows 전용 — Agent 서브프로세스가 MCP 서버를 남기는 문제 대응.
+ * PID → 루트 조상까지의 체인에서 살아있는 조상이 있는지 확인한다.
+ * 프로세스 맵을 사용하여 O(depth) 탐색.
+ * @param {number} pid
+ * @param {Map<number, {ppid: number, name: string}>} procMap
+ * @param {Set<number>} protectedPids
+ * @returns {boolean} true = 보호됨 (활성 조상 체인이 있음)
+ */
+function hasLiveAncestorChain(pid, procMap, protectedPids) {
+  const visited = new Set();
+  let current = pid;
+
+  while (current > 0 && !visited.has(current)) {
+    visited.add(current);
+
+    if (protectedPids.has(current)) return true;
+
+    const info = procMap.get(current);
+    if (!info) {
+      // 프로세스 맵에 없음 → 살아있는지 직접 확인
+      return isPidAlive(current);
+    }
+
+    const ppid = info.ppid;
+    if (!Number.isFinite(ppid) || ppid <= 0) {
+      // 루트 프로세스 (ppid=0) — 시스템 프로세스이므로 보호
+      return true;
+    }
+
+    // 부모가 맵에 없고 죽었으면 → 고아 체인
+    if (!procMap.has(ppid) && !isPidAlive(ppid)) return false;
+
+    current = ppid;
+  }
+
+  return false;
+}
+
+/**
+ * 고아 프로세스 트리를 정리한다 (node.exe + bash.exe + cmd.exe).
+ * Windows 전용 — Agent 서브프로세스가 MCP 서버, bash 래퍼, cmd 래퍼를 남기는 문제 대응.
  *
- * 보호 대상: 현재 프로세스, Hub PID, 살아있는 부모를 가진 프로세스
+ * 전략: 부모 체인을 루트까지 추적하여, 체인 중간에 죽은 프로세스가 있으면
+ * 해당 프로세스 아래의 전체 트리를 고아로 판정하고 정리.
+ *
+ * 보호 대상: 현재 프로세스 조상 트리, Hub PID
  * @returns {{ killed: number, remaining: number }}
  */
 export function cleanupOrphanNodeProcesses() {
@@ -89,7 +154,6 @@ export function cleanupOrphanNodeProcesses() {
   if (Number.isFinite(hubPid) && hubPid > 0) protectedPids.add(hubPid);
 
   try {
-    // 현재 프로세스의 조상 트리를 보호 목록에 추가
     const treeOutput = execSync(
       `powershell -NoProfile -ExecutionPolicy Bypass -File "${TREE_SCRIPT_PATH}" -StartPid ${myPid}`,
       { encoding: "utf8", timeout: 8000, stdio: ["pipe", "pipe", "pipe"] },
@@ -100,34 +164,40 @@ export function cleanupOrphanNodeProcesses() {
     }
   } catch {}
 
-  let killed = 0;
+  // 전체 프로세스 맵 구축 (node + bash + cmd)
+  const procMap = new Map();
   try {
-    // 부모가 죽은 고아 node.exe 찾기 — PS 스크립트로 실행 (bash $_ 이스케이핑 회피)
     const output = execSync(
-      `powershell -NoProfile -ExecutionPolicy Bypass -File "${CLEANUP_SCRIPT_PATH}"`,
+      `powershell -NoProfile -ExecutionPolicy Bypass -File "${SCAN_SCRIPT_PATH}"`,
       { encoding: "utf8", timeout: 15000, stdio: ["pipe", "pipe", "pipe"] },
     );
 
     for (const line of output.split(/\r?\n/)) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      const [pidStr, ppidStr] = trimmed.split(",");
+      const [pidStr, ppidStr, name] = trimmed.split(",");
       const pid = Number.parseInt(pidStr, 10);
       const ppid = Number.parseInt(ppidStr, 10);
-
-      if (!Number.isFinite(pid) || pid <= 0) continue;
-      if (protectedPids.has(pid)) continue;
-
-      // 부모가 살아있으면 건드리지 않음
-      if (Number.isFinite(ppid) && ppid > 0 && isPidAlive(ppid)) continue;
-
-      // 고아 프로세스 종료
-      try {
-        process.kill(pid, "SIGTERM");
-        killed++;
-      } catch {}
+      if (Number.isFinite(pid) && pid > 0) {
+        procMap.set(pid, { ppid, name: name || "unknown" });
+      }
     }
   } catch {}
+
+  // 고아 판정 + 정리
+  let killed = 0;
+  for (const [pid, info] of procMap) {
+    if (protectedPids.has(pid)) continue;
+
+    // 조상 체인이 살아있으면 건드리지 않음
+    if (hasLiveAncestorChain(pid, procMap, protectedPids)) continue;
+
+    // 고아 → 종료
+    try {
+      process.kill(pid, "SIGTERM");
+      killed++;
+    } catch {}
+  }
 
   // 남은 프로세스 수 확인
   let remaining = 0;
