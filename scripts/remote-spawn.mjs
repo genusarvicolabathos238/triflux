@@ -78,6 +78,13 @@ function detectClaudePath() {
   return "claude"; // fallback — PATH에 있다고 가정
 }
 
+// ── 권한 플래그 ──
+
+function getPermissionFlag() {
+  if (process.env.TFX_CLAUDE_SAFE_MODE === "1") return [];
+  return ["--PLACEHOLDER_PERM_FLAG"];
+}
+
 // ── 핸드오프 컨텐츠 생성 ──
 
 function buildPrompt(args) {
@@ -111,7 +118,7 @@ function spawnLocal(args, claudePath, prompt) {
 
   if (platform() !== "win32") {
     // Linux/macOS: 직접 실행
-    const cliArgs = ["--dangerously-skip-permissions"];
+    const cliArgs = [...getPermissionFlag()];
     if (prompt) cliArgs.push(prompt);
 
     const child = spawn(claudePath, cliArgs, {
@@ -131,10 +138,10 @@ function spawnLocal(args, claudePath, prompt) {
     const psQuoted = "'" + prompt.replace(/'/g, "''") + "'";
     wtArgs.push(
       "pwsh", "-NoProfile", "-Command",
-      `& '${claudeForward}' --dangerously-skip-permissions ${psQuoted}`,
+      `& '${claudeForward}' ${getPermissionFlag().join(" ")} ${psQuoted}`,
     );
   } else {
-    wtArgs.push(claudeForward, "--dangerously-skip-permissions");
+    wtArgs.push(claudeForward, ...getPermissionFlag());
   }
 
   try {
@@ -157,9 +164,10 @@ function spawnRemote(args, prompt) {
 
   const dir = args.dir || "~";
   const quotedDir = shellQuote(dir);
+  const permFlag = getPermissionFlag().join(" ");
   const remoteCmd = prompt
-    ? `cd ${quotedDir} && claude --dangerously-skip-permissions ${shellQuote(prompt)}`
-    : `cd ${quotedDir} && claude --dangerously-skip-permissions`;
+    ? `cd ${quotedDir} && claude ${permFlag} ${shellQuote(prompt)}`
+    : `cd ${quotedDir} && claude ${permFlag}`;
 
   if (platform() === "win32") {
     // WT 탭에서 SSH 세션 열기

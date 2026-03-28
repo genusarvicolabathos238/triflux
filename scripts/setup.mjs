@@ -220,6 +220,11 @@ const SYNC_MAP = [
     dst: join(CLAUDE_DIR, "scripts", "tfx-gate-activate.mjs"),
     label: "tfx-gate-activate.mjs",
   },
+  {
+    src: join(PLUGIN_ROOT, "scripts", "remote-spawn.mjs"),
+    dst: join(CLAUDE_DIR, "scripts", "remote-spawn.mjs"),
+    label: "remote-spawn.mjs",
+  },
 ];
 
 function getVersion(filePath) {
@@ -496,6 +501,7 @@ function applyAgentTeams(s) {
  */
 function applyRemoteControl(s) {
   if (s.remoteControlAtStartup === true) return false;
+  if (process.env.TFX_REMOTE_CONTROL !== "1" && !detectDevMode()) return false;
   s.remoteControlAtStartup = true;
   return true;
 }
@@ -800,4 +806,3 @@ process.exit(0);
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   main();
 }
-

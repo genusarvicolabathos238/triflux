@@ -144,7 +144,7 @@ function poll() {
     if (resultSize > 10 || shellReturned) {
       workerState.set(paneName, { paneIdx: pane.index, done: true });
       const meaningful = lines.filter((l) => !(/^(PS\s|>|\$)/.test(l)) && !(/tokens?\s+used/i.test(l)));
-      const verdict = meaningful.pop()?.slice(0, 80) || "completed";
+      const verdict = meaningful.pop() || "completed";
       tui.updateWorker(paneName, {
         cli,
         role: pane.title,
@@ -154,7 +154,7 @@ function poll() {
       });
     } else {
       const meaningful = lines.filter(l => !(/^(PS\s|>|\$)/.test(l)));
-      const snap = meaningful.pop()?.slice(0, 60) || lastLine.slice(0, 60);
+      const snap = meaningful.pop() || lastLine;
       tui.updateWorker(paneName, { cli, role: pane.title, status: "running", snapshot: snap, elapsed });
     }
   }

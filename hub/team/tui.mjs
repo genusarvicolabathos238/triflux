@@ -11,6 +11,9 @@ try {
   VERSION = require("../../package.json").version;
 } catch { /* fallback */ }
 
+const PREFIX_WIDTH = 48;
+const FALLBACK_COLUMNS = 80;
+
 /**
  * 로그 스트림 대시보드 생성 (append-only)
  * @param {object} [opts]
@@ -42,10 +45,18 @@ export function createLogDashboard(opts = {}) {
     return dim(`[${sec}s]`);
   }
 
+  function getMessageWidth() {
+    const columns = Number.isFinite(process.stdout.columns)
+      ? process.stdout.columns
+      : FALLBACK_COLUMNS;
+    return Math.max(3, columns - PREFIX_WIDTH);
+  }
+
   function oneLine(text, fallback = "n/a") {
     const normalized = String(text || "").replace(/\s+/g, " ").trim();
     if (!normalized) return fallback;
-    return normalized.length > 160 ? `${normalized.slice(0, 157)}...` : normalized;
+    const max = getMessageWidth();
+    return normalized.length > max ? `${normalized.slice(0, max - 3)}...` : normalized;
   }
 
   function cliColor(cli) {
