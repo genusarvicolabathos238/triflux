@@ -1382,7 +1382,7 @@ async function cmdDoctor(options = {}) {
   if (process.platform === "win32") {
     try {
       const { cleanupOrphanNodeProcesses } = await import("../hub/lib/process-utils.mjs");
-      if (autoFix) {
+      if (fix) {
         const { killed, remaining } = cleanupOrphanNodeProcesses();
         if (killed > 0) {
           warn(`고아 node.exe ${killed}개 정리 완료 (남은 프로세스: ${remaining})`);

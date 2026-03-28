@@ -2,9 +2,13 @@
 // 프로세스 관련 공유 유틸리티
 
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+
+const CLEANUP_SCRIPT_DIR = join(tmpdir(), "tfx-process-utils");
+const CLEANUP_SCRIPT_PATH = join(CLEANUP_SCRIPT_DIR, "cleanup-orphans.ps1");
+const TREE_SCRIPT_PATH = join(CLEANUP_SCRIPT_DIR, "get-ancestor-tree.ps1");
 
 /**
  * 주어진 PID의 프로세스가 살아있는지 확인한다.
@@ -25,6 +29,37 @@ export function isPidAlive(pid) {
 }
 
 /**
+ * PowerShell 헬퍼 스크립트를 임시 디렉토리에 생성한다.
+ * bash의 $_ 이스케이핑 문제를 피하기 위해 -File로 실행.
+ */
+function ensureHelperScripts() {
+  mkdirSync(CLEANUP_SCRIPT_DIR, { recursive: true });
+
+  if (!existsSync(TREE_SCRIPT_PATH)) {
+    writeFileSync(TREE_SCRIPT_PATH, `
+param([int]$StartPid)
+$p = $StartPid
+for ($i = 0; $i -lt 10; $i++) {
+    if ($p -le 0) { break }
+    Write-Output $p
+    $parent = (Get-CimInstance Win32_Process -Filter "ProcessId=$p" -ErrorAction SilentlyContinue).ParentProcessId
+    if ($null -eq $parent -or $parent -le 0) { break }
+    $p = $parent
+}
+`, "utf8");
+  }
+
+  if (!existsSync(CLEANUP_SCRIPT_PATH)) {
+    writeFileSync(CLEANUP_SCRIPT_PATH, `
+$ErrorActionPreference = 'SilentlyContinue'
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" | ForEach-Object {
+    Write-Output "$($_.ProcessId),$($_.ParentProcessId)"
+}
+`, "utf8");
+  }
+}
+
+/**
  * 부모 프로세스가 죽은 고아 node.exe 프로세스를 정리한다.
  * Windows 전용 — Agent 서브프로세스가 MCP 서버를 남기는 문제 대응.
  *
@@ -33,6 +68,8 @@ export function isPidAlive(pid) {
  */
 export function cleanupOrphanNodeProcesses() {
   if (process.platform !== "win32") return { killed: 0, remaining: 0 };
+
+  ensureHelperScripts();
 
   const myPid = process.pid;
 
@@ -54,7 +91,7 @@ export function cleanupOrphanNodeProcesses() {
   try {
     // 현재 프로세스의 조상 트리를 보호 목록에 추가
     const treeOutput = execSync(
-      `powershell -NoProfile -Command "$p=${myPid}; for($i=0;$i -lt 10;$i++){if($p -le 0){break}; Write-Output $p; $p=(Get-CimInstance Win32_Process -Filter \\"ProcessId=$p\\").ParentProcessId}"`,
+      `powershell -NoProfile -ExecutionPolicy Bypass -File "${TREE_SCRIPT_PATH}" -StartPid ${myPid}`,
       { encoding: "utf8", timeout: 8000, stdio: ["pipe", "pipe", "pipe"] },
     );
     for (const line of treeOutput.split(/\r?\n/)) {
@@ -65,14 +102,14 @@ export function cleanupOrphanNodeProcesses() {
 
   let killed = 0;
   try {
-    // 부모가 죽은 고아 node.exe 찾기
+    // 부모가 죽은 고아 node.exe 찾기 — PS 스크립트로 실행 (bash $_ 이스케이핑 회피)
     const output = execSync(
-      `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"Name='node.exe'\\" | Select-Object ProcessId,ParentProcessId | ForEach-Object { Write-Output \\"\\"$($_.ProcessId),$($_.ParentProcessId)\\" }"`,
+      `powershell -NoProfile -ExecutionPolicy Bypass -File "${CLEANUP_SCRIPT_PATH}"`,
       { encoding: "utf8", timeout: 15000, stdio: ["pipe", "pipe", "pipe"] },
     );
 
     for (const line of output.split(/\r?\n/)) {
-      const trimmed = line.trim().replace(/^"|"$/g, "");
+      const trimmed = line.trim();
       if (!trimmed) continue;
       const [pidStr, ppidStr] = trimmed.split(",");
       const pid = Number.parseInt(pidStr, 10);
