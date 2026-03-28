@@ -259,7 +259,7 @@ function collectResults(results) {
   // B3 fix: git diff를 루프 밖에서 1회만 실행 (워커 수만큼 중복 방지)
   let gitDiffFiles;
   try {
-    const diffOut = execSync("git diff --name-only HEAD", { encoding: "utf8", timeout: 5000 });
+    const diffOut = execSync("git diff --name-only HEAD", { encoding: "utf8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
     gitDiffFiles = diffOut.trim().split("\n").filter(Boolean);
   } catch { /* git 미설치 또는 non-repo — 무시 */ }
 
