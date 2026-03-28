@@ -6,9 +6,9 @@
 //   node remote-spawn.mjs --host <ssh-host> [--dir <path>] [--prompt "..."] [--handoff <file>]
 
 import { execFileSync, spawn } from "child_process";
-import { readFileSync, existsSync, statSync } from "fs";
+import { readFileSync, existsSync, statSync, writeFileSync } from "fs";
 import { resolve, join } from "path";
-import { homedir, platform } from "os";
+import { homedir, platform, tmpdir } from "os";
 
 const MAX_HANDOFF_BYTES = 1 * 1024 * 1024; // 1 MB
 
@@ -82,7 +82,7 @@ function detectClaudePath() {
 
 function getPermissionFlag() {
   if (process.env.TFX_CLAUDE_SAFE_MODE === "1") return [];
-  return ["--PLACEHOLDER_PERM_FLAG"];
+  return ["--dangerously-skip-permissions"];
 }
 
 // ── 핸드오프 컨텐츠 생성 ──
@@ -163,19 +163,47 @@ function spawnRemote(args, prompt) {
   }
 
   const dir = args.dir || "~";
-  const quotedDir = shellQuote(dir);
-  const permFlag = getPermissionFlag().join(" ");
-  const remoteCmd = prompt
-    ? `cd ${quotedDir} && claude ${permFlag} ${shellQuote(prompt)}`
-    : `cd ${quotedDir} && claude ${permFlag}`;
+  const permFlags = getPermissionFlag();
+
+  // 전략: 원격에 .ps1 스크립트 파일 작성 → pwsh -NoExit -File로 실행
+  // 인라인 쿼팅 지옥 완전 회피
+  const scriptLines = [
+    `cd '${dir.replace(/'/g, "''")}'`,
+  ];
+  if (prompt) {
+    const safePrompt = prompt.replace(/'/g, "''");
+    scriptLines.push(`& "$env:USERPROFILE\\.local\\bin\\claude.exe" ${permFlags.join(" ")} '${safePrompt}'`);
+  } else {
+    scriptLines.push(`& "$env:USERPROFILE\\.local\\bin\\claude.exe" ${permFlags.join(" ")}`);
+  }
+  const scriptContent = scriptLines.join("\n");
+
+  // 1단계: 로컬 임시파일에 스크립트 작성 → scp로 원격 홈에 전송
+  const localScript = join(tmpdir(), "tfx-remote-spawn.ps1");
+  writeFileSync(localScript, scriptContent, "utf8");
+
+  try {
+    execFileSync("scp", [localScript, `${host}:tfx-remote-spawn.ps1`], { timeout: 10000, stdio: "pipe" });
+  } catch (err) {
+    console.error("failed to copy script to remote:", err.message);
+    process.exit(1);
+  }
+
+  // 2단계: 원격 홈 디렉토리 절대경로 취득 → WT에서 ~ 확장 안 되므로
+  let remoteHome;
+  try {
+    remoteHome = execFileSync("ssh", [host, "echo", "$env:USERPROFILE"], { encoding: "utf8", timeout: 5000 }).trim();
+  } catch {
+    remoteHome = "C:\\Users\\" + host; // fallback
+  }
+  const remoteScript = remoteHome.replace(/\\/g, "/") + "/tfx-remote-spawn.ps1";
+  const remoteCmd = `pwsh -NoExit -File ${remoteScript}`;
 
   if (platform() === "win32") {
-    // WT 탭에서 SSH 세션 열기
     const wtArgs = [
       "new-tab", "--title", `Claude@${host}`, "--",
       "ssh", "-t", "--", host, remoteCmd,
     ];
-
     try {
       spawn("wt.exe", wtArgs, { detached: true, stdio: "ignore", windowsHide: false }).unref();
       console.log(`spawned remote Claude → ${host}:${dir}`);
@@ -184,7 +212,6 @@ function spawnRemote(args, prompt) {
       process.exit(1);
     }
   } else {
-    // Linux/macOS: 직접 SSH
     const child = spawn("ssh", ["-t", "--", host, remoteCmd], { stdio: "inherit" });
     child.on("exit", (code) => process.exit(code || 0));
   }
