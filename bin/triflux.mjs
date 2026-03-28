@@ -1377,6 +1377,40 @@ async function cmdDoctor(options = {}) {
     }
   }
 
+  // 12.5. 고아 node.exe 프로세스 정리 (Windows)
+  section("Orphan Processes");
+  if (process.platform === "win32") {
+    try {
+      const { cleanupOrphanNodeProcesses } = await import("../hub/lib/process-utils.mjs");
+      if (autoFix) {
+        const { killed, remaining } = cleanupOrphanNodeProcesses();
+        if (killed > 0) {
+          warn(`고아 node.exe ${killed}개 정리 완료 (남은 프로세스: ${remaining})`);
+        } else {
+          ok(`고아 node.exe 없음 (활성: ${remaining})`);
+        }
+      } else {
+        // --fix 없이는 개수만 보고
+        const { execSync: execSyncDoctor } = await import("node:child_process");
+        const countStr = execSyncDoctor(
+          `powershell -NoProfile -Command "(Get-Process node -ErrorAction SilentlyContinue).Count"`,
+          { encoding: "utf8", timeout: 5000 },
+        ).trim();
+        const count = Number.parseInt(countStr, 10) || 0;
+        if (count > 20) {
+          warn(`node.exe ${count}개 실행 중 (고아 포함 가능). 정리: tfx doctor --fix`);
+          issues++;
+        } else {
+          ok(`node.exe ${count}개 (정상 범위)`);
+        }
+      }
+    } catch (e) {
+      info(`고아 프로세스 검사 실패: ${e.message}`);
+    }
+  } else {
+    ok("Windows 전용 검사 — 건너뜀");
+  }
+
   // 13. Stale Teams (Claude teams/ + tasks/ 자동 감지)
   section("Stale Teams");
   const teamsDir = join(CLAUDE_DIR, "teams");

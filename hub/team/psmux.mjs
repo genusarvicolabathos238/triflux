@@ -2,7 +2,7 @@
 // 의존성: child_process, fs, os, path (Node.js 내장)만 사용
 import childProcess from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 
 const PSMUX_BIN = process.env.PSMUX_BIN || "psmux";
@@ -26,7 +26,7 @@ function quoteArg(value) {
 }
 
 function sanitizePathPart(value) {
-  return String(value).replace(/[<>:"/\\|?*\u0000-\u001f]/gu, "_");
+  return String(value).replace(/[<>:"/\\|?*\u0000-\u001f']/gu, "_");
 }
 
 function toPaneTitle(index) {
@@ -535,13 +535,24 @@ function killOrphanPipeHelpers(sessionName) {
 function killOrphanMcpProcesses(sessionName) {
   if (!IS_WINDOWS) return;
   const safeSession = sanitizePathPart(sessionName);
+
+  // Hub PID 보호 — Hub 프로세스를 고아로 잘못 식별하지 않도록
+  let hubPid = null;
+  try {
+    const hubPidPath = join(homedir(), ".claude", "cache", "tfx-hub", "hub.pid");
+    if (existsSync(hubPidPath)) {
+      const hubInfo = JSON.parse(readFileSync(hubPidPath, "utf8"));
+      hubPid = Number(hubInfo?.pid);
+    }
+  } catch {}
+
   try {
     // 세션 결과 디렉토리 패턴으로 MCP 서버 프로세스 식별
     const output = childProcess.execSync(
       `powershell -NoProfile -Command "$ErrorActionPreference='SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match '${safeSession}' } | Select-Object -ExpandProperty ProcessId"`,
       { encoding: "utf8", timeout: 8000, stdio: ["pipe", "pipe", "pipe"] },
     );
-    const pids = output.split(/\r?\n/).map((l) => Number.parseInt(l.trim(), 10)).filter((p) => Number.isFinite(p) && p > 0);
+    const pids = output.split(/\r?\n/).map((l) => Number.parseInt(l.trim(), 10)).filter((p) => Number.isFinite(p) && p > 0 && p !== hubPid);
     for (const pid of pids) {
       killProcessTree(pid);
     }
@@ -753,8 +764,8 @@ export function startCapture(sessionName, paneNameOrTarget) {
  */
 function wrapCliForBash(cmd) {
   const trimmed = cmd.trimStart();
-  // PowerShell 구문(Clear-Host, Get-Content 등)이 포함되면 이미 PowerShell용 — bash 래핑 건너뜀
-  if (/Clear-Host|Get-Content/i.test(trimmed)) return cmd;
+  // PowerShell 구문(Clear-Host, Get-Content 등) 또는 completion token이 포함되면 PowerShell 직통
+  if (/Clear-Host|Get-Content|__TRIFLUX_DONE__/i.test(trimmed)) return cmd;
   const isCli = /\b(codex|gemini)\b/u.test(trimmed);
   if (!isCli) return cmd;
   // 단일 따옴표 이스케이프: ' → '\''
@@ -899,6 +910,30 @@ export async function waitForCompletion(sessionName, paneNameOrTarget, token, ti
     "m",
   );
   const result = await waitForPattern(sessionName, paneNameOrTarget, completionRegex, timeoutSec, opts);
+
+  // 타이밍 이슈 대응: matched=false인 경우 500ms 대기 후 최종 1회 캡처 재시도
+  if (!result.matched && !result.sessionDead && result.logPath) {
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      const pane = resolvePane(sessionName, paneNameOrTarget);
+      const snapshot = psmuxExec(["capture-pane", "-t", pane.paneId, "-p", "-S", "-"]);
+      writeFileSync(result.logPath, snapshot, "utf8");
+      const content = readCaptureLog(result.logPath);
+      const retryMatch = completionRegex.exec(content);
+      if (retryMatch) {
+        return {
+          ...result,
+          matched: true,
+          match: retryMatch[0],
+          token,
+          exitCode: Number.parseInt(retryMatch[1], 10),
+        };
+      }
+    } catch {
+      // 세션 이미 종료 — 무시
+    }
+  }
+
   const exitMatch = result.match ? completionRegex.exec(result.match) : null;
   return {
     ...result,

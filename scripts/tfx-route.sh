@@ -29,6 +29,15 @@ VERSION="2.5"
 
 set -euo pipefail
 
+# ── timeout 명령 호환성 — Windows에서 TIMEOUT.exe 대신 Git Bash coreutils timeout 사용 ──
+if command -v /usr/bin/timeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="/usr/bin/timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="gtimeout"  # macOS homebrew
+else
+  TIMEOUT_BIN="timeout"   # Linux 기본
+fi
+
 # ── Async Job 디렉토리 ──
 TFX_JOBS_DIR="${TMPDIR:-/tmp}/tfx-jobs"
 
@@ -1120,9 +1129,9 @@ run_stream_worker() {
   )
 
   if [[ "$use_tee_flag" == "true" ]]; then
-    printf '%s' "$prompt" | timeout "$TIMEOUT_SEC" "${worker_cmd[@]}" 2>"$STDERR_LOG" | tee "$STDOUT_LOG" &
+    printf '%s' "$prompt" | "$TIMEOUT_BIN" "$TIMEOUT_SEC" "${worker_cmd[@]}" 2>"$STDERR_LOG" | tee "$STDOUT_LOG" &
   else
-    printf '%s' "$prompt" | timeout "$TIMEOUT_SEC" "${worker_cmd[@]}" >"$STDOUT_LOG" 2>"$STDERR_LOG" &
+    printf '%s' "$prompt" | "$TIMEOUT_BIN" "$TIMEOUT_SEC" "${worker_cmd[@]}" >"$STDOUT_LOG" 2>"$STDERR_LOG" &
   fi
   worker_pid=$!
 
@@ -1144,9 +1153,9 @@ _gemini_run_once() {
   local -a g_args=("$@")
 
   if [[ "$use_tee_flag" == "true" ]]; then
-    timeout "$TIMEOUT_SEC" "$CLI_CMD" "${g_args[@]}" "$prompt" 2>"$STDERR_LOG" | tee "$STDOUT_LOG" &
+    "$TIMEOUT_BIN" "$TIMEOUT_SEC" "$CLI_CMD" "${g_args[@]}" "$prompt" 2>"$STDERR_LOG" | tee "$STDOUT_LOG" &
   else
-    timeout "$TIMEOUT_SEC" "$CLI_CMD" "${g_args[@]}" "$prompt" >"$STDOUT_LOG" 2>"$STDERR_LOG" &
+    "$TIMEOUT_BIN" "$TIMEOUT_SEC" "$CLI_CMD" "${g_args[@]}" "$prompt" >"$STDOUT_LOG" 2>"$STDERR_LOG" &
   fi
   echo "$!"
 }
@@ -1285,9 +1294,9 @@ run_codex_exec() {
   fi
 
   if [[ "$use_tee_flag" == "true" ]]; then
-    timeout "$TIMEOUT_SEC" "$CLI_CMD" "${codex_args[@]}" "$prompt" 2>"$STDERR_LOG" | tee "$STDOUT_LOG" &
+    "$TIMEOUT_BIN" "$TIMEOUT_SEC" "$CLI_CMD" "${codex_args[@]}" "$prompt" 2>"$STDERR_LOG" | tee "$STDOUT_LOG" &
   else
-    timeout "$TIMEOUT_SEC" "$CLI_CMD" "${codex_args[@]}" "$prompt" >"$STDOUT_LOG" 2>"$STDERR_LOG" &
+    "$TIMEOUT_BIN" "$TIMEOUT_SEC" "$CLI_CMD" "${codex_args[@]}" "$prompt" >"$STDOUT_LOG" 2>"$STDERR_LOG" &
   fi
   worker_pid=$!
 
@@ -1379,9 +1388,9 @@ run_codex_mcp() {
   esac
 
   if [[ "$use_tee_flag" == "true" ]]; then
-    timeout "$TIMEOUT_SEC" "$node_bin" "${mcp_args[@]}" 2>"$STDERR_LOG" | tee "$STDOUT_LOG" &
+    "$TIMEOUT_BIN" "$TIMEOUT_SEC" "$node_bin" "${mcp_args[@]}" 2>"$STDERR_LOG" | tee "$STDOUT_LOG" &
   else
-    timeout "$TIMEOUT_SEC" "$node_bin" "${mcp_args[@]}" >"$STDOUT_LOG" 2>"$STDERR_LOG" &
+    "$TIMEOUT_BIN" "$TIMEOUT_SEC" "$node_bin" "${mcp_args[@]}" >"$STDOUT_LOG" 2>"$STDERR_LOG" &
   fi
   worker_pid=$!
 

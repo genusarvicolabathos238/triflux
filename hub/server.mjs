@@ -18,6 +18,7 @@ import { createAssignCallbackServer } from './assign-callbacks.mjs';
 import { createTools } from './tools.mjs';
 import { DelegatorService } from './delegator/index.mjs';
 import { createDelegatorMcpWorker } from './workers/delegator-mcp.mjs';
+import { cleanupOrphanNodeProcesses } from './lib/process-utils.mjs';
 import { createModuleLogger } from '../scripts/lib/logger.mjs';
 import { wrapRequestHandler } from './middleware/request-logger.mjs';
 
@@ -778,6 +779,18 @@ export async function startHub({ port = 27888, dbPath, host = '127.0.0.1', sessi
   }, 60000);
   sessionTimer.unref();
 
+  // 고아 node.exe 프로세스 주기적 정리 (5분마다)
+  // Agent 서브프로세스가 MCP 서버를 남기는 Windows 이슈 대응
+  const orphanCleanupTimer = setInterval(() => {
+    try {
+      const { killed } = cleanupOrphanNodeProcesses();
+      if (killed > 0) {
+        hubLog.info({ killed }, 'hub.orphan_cleanup');
+      }
+    } catch {}
+  }, 5 * 60 * 1000);
+  orphanCleanupTimer.unref();
+
   // Evict stale rate-limit buckets once per minute to bound memory usage.
   const rateLimitTimer = setInterval(() => {
     const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS;
@@ -793,6 +806,32 @@ export async function startHub({ port = 27888, dbPath, host = '127.0.0.1', sessi
   rateLimitTimer.unref();
 
   mkdirSync(PID_DIR, { recursive: true });
+
+  // Stale PID 파일 정리 — 이전 Hub 프로세스가 비정상 종료된 경우
+  if (existsSync(PID_FILE)) {
+    try {
+      const prevInfo = JSON.parse(readFileSync(PID_FILE, 'utf8'));
+      const prevPid = Number(prevInfo?.pid);
+      if (Number.isFinite(prevPid) && prevPid > 0) {
+        try {
+          process.kill(prevPid, 0); // alive 체크만
+          // 프로세스가 살아있으면 포트 충돌 가능성 — 기존 Hub 재사용 안내
+          if (Number(prevInfo.port) === Number(port)) {
+            hubLog.warn({ prevPid, port }, 'hub.stale_pid: previous hub still alive on same port');
+          }
+        } catch {
+          // 프로세스 죽음 → stale PID 파일 삭제
+          try { unlinkSync(PID_FILE); } catch {}
+          hubLog.info({ prevPid }, 'hub.stale_pid_cleaned');
+        }
+      } else {
+        try { unlinkSync(PID_FILE); } catch {}
+      }
+    } catch {
+      try { unlinkSync(PID_FILE); } catch {}
+    }
+  }
+
   await pipe.start();
   await assignCallbacks.start();
 
@@ -832,6 +871,7 @@ export async function startHub({ port = 27888, dbPath, host = '127.0.0.1', sessi
         clearInterval(hitlTimer);
         clearInterval(sessionTimer);
         clearInterval(rateLimitTimer);
+        clearInterval(orphanCleanupTimer);
         for (const [, session] of transports) {
           try { await session.mcp.close(); } catch {}
           try { await session.transport.close(); } catch {}
@@ -860,7 +900,14 @@ export async function startHub({ port = 27888, dbPath, host = '127.0.0.1', sessi
         stop: stopFn,
       });
     });
-    httpServer.on('error', reject);
+    httpServer.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        hubLog.error({ port, host }, 'hub.port_in_use: port already occupied — check for existing hub or other service');
+        reject(new Error(`Hub 포트 ${port}이(가) 이미 사용 중입니다. 기존 Hub 프로세스를 확인하세요. (PID file: ${PID_FILE})`));
+      } else {
+        reject(err);
+      }
+    });
   });
 }
 
