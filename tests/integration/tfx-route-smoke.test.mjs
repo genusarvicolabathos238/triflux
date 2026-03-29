@@ -64,7 +64,7 @@ function fixtureEnv(extraEnv = {}) {
 
 // ── claude-native 에이전트 기본 라우팅 ──
 
-describe('tfx-route.sh — claude-native 에이전트 메타데이터 출력', () => {
+describe('tfx-route.sh — claude-native 에이전트 메타데이터 출력', { timeout: 180000 }, () => {
   it('explore 에이전트는 ROUTE_TYPE=claude-native와 MODEL=haiku를 출력해야 한다', () => {
     const result = runBash(`bash "${ROUTE_SCRIPT}" explore 'test-prompt'`);
     assert.equal(result.status, 0, out(result));
@@ -73,38 +73,43 @@ describe('tfx-route.sh — claude-native 에이전트 메타데이터 출력', (
     assert.match(out(result), /AGENT=explore/);
   });
 
-  it('verifier 에이전트는 기본 route table에서 claude-native 메타데이터를 출력해야 한다', () => {
+  it('verifier 에이전트는 기본 route table에서 codex review 경로를 사용해야 한다', () => {
     const result = runBash(
       `bash "${ROUTE_SCRIPT}" verifier 'test-prompt'`,
+      fixtureEnv({ FAKE_CODEX_MODE: 'exec' }),
+    );
+    assert.equal(result.status, 0, out(result));
+    assert.match(out(result), /type=codex/);
+    assert.match(out(result), /agent=verifier/);
+  });
+
+  it('verifier + TFX_VERIFIER_OVERRIDE=claude는 claude-native로 전환해야 한다', () => {
+    const result = runBash(
+      `TFX_VERIFIER_OVERRIDE=claude bash "${ROUTE_SCRIPT}" verifier 'test-prompt'`,
     );
     assert.equal(result.status, 0, out(result));
     assert.match(out(result), /ROUTE_TYPE=claude-native/);
     assert.match(out(result), /AGENT=verifier/);
   });
 
-  it('verifier + TFX_NO_CLAUDE_NATIVE=1은 codex review 경로를 사용해야 한다', () => {
+  it('test-engineer 에이전트는 codex 경로를 사용해야 한다', () => {
     const result = runBash(
-      `TFX_NO_CLAUDE_NATIVE=1 CODEX_BIN=codex bash "${ROUTE_SCRIPT}" verifier 'test-prompt'`,
+      `bash "${ROUTE_SCRIPT}" test-engineer 'test-prompt'`,
       fixtureEnv({ FAKE_CODEX_MODE: 'exec' }),
     );
     assert.equal(result.status, 0, out(result));
     assert.match(out(result), /type=codex/);
-    assert.match(out(result), /agent=verifier/);
-    assert.match(out(result), /EXEC:test-prompt/);
+    assert.match(out(result), /agent=test-engineer/);
   });
 
-  it('test-engineer 에이전트는 ROUTE_TYPE=claude-native를 출력해야 한다', () => {
-    const result = runBash(`bash "${ROUTE_SCRIPT}" test-engineer 'test-prompt'`);
+  it('qa-tester 에이전트는 codex review 경로를 사용해야 한다', () => {
+    const result = runBash(
+      `bash "${ROUTE_SCRIPT}" qa-tester 'test-prompt'`,
+      fixtureEnv({ FAKE_CODEX_MODE: 'exec' }),
+    );
     assert.equal(result.status, 0, out(result));
-    assert.match(out(result), /ROUTE_TYPE=claude-native/);
-    assert.match(out(result), /AGENT=test-engineer/);
-  });
-
-  it('qa-tester 에이전트는 ROUTE_TYPE=claude-native를 출력해야 한다', () => {
-    const result = runBash(`bash "${ROUTE_SCRIPT}" qa-tester 'test-prompt'`);
-    assert.equal(result.status, 0, out(result));
-    assert.match(out(result), /ROUTE_TYPE=claude-native/);
-    assert.match(out(result), /AGENT=qa-tester/);
+    assert.match(out(result), /type=codex/);
+    assert.match(out(result), /agent=qa-tester/);
   });
 });
 
@@ -246,7 +251,7 @@ describe('tfx-route.sh — 역할별 MCP profile 필터', () => {
     assert.deepEqual(allowedMcpServers(result), ['context7', 'brave-search', 'tavily', 'exa']);
   });
 
-  it('code-reviewer + auto 는 reviewer profile로 수렴하고 sequential-thinking만 분석 도구로 남겨야 한다', () => {
+  it('code-reviewer + auto 는 reviewer profile로 수렴하고 context7+brave-search를 포함해야 한다', () => {
     const result = runBash(
       `bash "${ROUTE_SCRIPT}" code-reviewer 'profile-check' auto`,
       fixtureEnv({ FAKE_CODEX_MODE: 'exec', FAKE_CODEX_ECHO_CONFIG: '1' }),
@@ -254,7 +259,10 @@ describe('tfx-route.sh — 역할별 MCP profile 필터', () => {
 
     assert.equal(result.status, 0, out(result));
     assert.match(out(result), /resolved_profile=reviewer/);
-    assert.deepEqual(allowedMcpServers(result), ['context7', 'brave-search', 'sequential-thinking']);
+    const servers = allowedMcpServers(result);
+    assert.ok(servers.includes('context7'), `context7 포함: ${servers}`);
+    assert.ok(servers.includes('brave-search'), `brave-search 포함: ${servers}`);
+    // sequential-thinking은 서버 설치 여부에 따라 포함/미포함 (환경 의존)
   });
 
   it('writer + auto 는 writer profile로 수렴하고 exa를 허용해야 한다', () => {

@@ -928,6 +928,10 @@ export function createLogDashboard(opts = {}) {
       return focus === "detail";
     },
 
+    getLayout() {
+      return layoutHint;
+    },
+
     close() {
       if (closed) return;
       if (timer) clearInterval(timer);

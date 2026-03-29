@@ -67,8 +67,8 @@ describe("progressBar: boundary values do not crash", () => {
     assert.ok(result.includes("\u2591"), "should have empty blocks");
   });
 
-  it("returns fully filled bar when ratio is 1", () => {
-    const result = progressBar(1, 20);
+  it("returns fully filled bar when percent is 100", () => {
+    const result = progressBar(100, 20);
     assert.ok(result.includes("\u2588"), "should have filled blocks");
     assert.ok(!result.includes("\u2591"), "should have no empty blocks");
   });

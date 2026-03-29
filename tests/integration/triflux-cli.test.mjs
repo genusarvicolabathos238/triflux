@@ -32,7 +32,10 @@ function runCli(args, { homeDir = createHomeDir(), env = {} } = {}) {
 
 function parseStdoutJson(result) {
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  return JSON.parse(result.stdout);
+  // stdout에 ANSI 코드가 섞일 수 있으므로 마지막 JSON 블록 추출
+  const match = result.stdout.match(/\{[\s\S]*\}$/m);
+  assert.ok(match, `JSON 블록을 찾을 수 없음: ${result.stdout.slice(0, 200)}`);
+  return JSON.parse(match[0]);
 }
 
 describe("triflux CLI JSON and schema surface", { timeout: 30000 }, () => {
