@@ -66,13 +66,25 @@ function startHubDetached(port) {
   if (!existsSync(serverPath)) return false;
 
   try {
-    const child = spawn(process.execPath, [serverPath], {
-      env: { ...process.env, TFX_HUB_PORT: String(port) },
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    child.unref();
+    const env = { ...process.env, TFX_HUB_PORT: String(port) };
+    if (process.platform === "win32") {
+      // Windows: cmd.exe /c start /b → 완전 독립 프로세스 트리 생성
+      // hook timeout 시 프로세스 트리 킬에서 살아남음
+      const child = spawn("cmd.exe", ["/c", "start", "/b", "", process.execPath, serverPath], {
+        env,
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      child.unref();
+    } else {
+      const child = spawn(process.execPath, [serverPath], {
+        env,
+        detached: true,
+        stdio: "ignore",
+      });
+      child.unref();
+    }
     return true;
   } catch {
     return false;
@@ -94,9 +106,16 @@ const { host, port } = resolveHubTarget();
 if (!(await isHubHealthy(host, port))) {
   const started = startHubDetached(port);
   if (started) {
-    const ready = await waitForHubReady(host, port);
-    if (!ready) {
-      console.error("[tfx-hub-ensure] Hub 시작했으나 ready 대기 초과 — MCP 연결 실패 가능");
+    const ready = await waitForHubReady(host, port, 3000);
+    if (ready) {
+      process.stdout.write("hub: ok");
+    } else {
+      // fire-and-forget: hub이 아직 기동 중일 수 있음 — 에러가 아닌 경고
+      process.stdout.write("hub: starting");
     }
+  } else {
+    process.stderr.write("[hub-ensure] hub 시작 실패");
   }
+} else {
+  process.stdout.write("hub: ok");
 }
