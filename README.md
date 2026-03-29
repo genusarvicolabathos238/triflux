@@ -166,7 +166,8 @@ Phase 3: Resolution (if consensus < 70%)
 | `tfx-codex` | Codex-only orchestrator |
 | `tfx-gemini` | Gemini-only orchestrator |
 | `tfx-auto-codex` | Codex-lead orchestrator |
-| `remote-spawn` | Remote session management via psmux |
+| `tfx-remote-spawn` | Remote session management via psmux |
+| `tfx-remote-setup` | Remote host setup wizard (Tailscale + SSH) |
 
 ---
 

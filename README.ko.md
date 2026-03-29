@@ -166,7 +166,8 @@ Phase 3: Resolution (합의율 < 70%일 경우)
 | `tfx-codex` | Codex 전용 오케스트레이터 |
 | `tfx-gemini` | Gemini 전용 오케스트레이터 |
 | `tfx-auto-codex` | Codex 주도 오케스트레이터 |
-| `remote-spawn` | psmux를 통한 원격 세션 관리 |
+| `tfx-remote-spawn` | psmux를 통한 원격 세션 관리 |
+| `tfx-remote-setup` | 원격 호스트 설정 위저드 (Tailscale + SSH) |
 
 ---
 
