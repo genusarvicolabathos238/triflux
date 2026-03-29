@@ -36,7 +36,7 @@ Bash("bash ~/.claude/scripts/tfx-route.sh {에이전트} '{hub 컨텍스트 + �
 
 # codex 직접 호출 시 — 반드시 exec 서브커맨드 포함
 Bash("codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check '{작업}'")
-Bash("codex --profile xhigh exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check '{작업}'")
+Bash("codex --profile gpt54_xhigh exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check '{작업}'")
 #          ↑ --profile은 exec 앞에, --skip-git-repo-check은 exec 뒤에
 
 # Claude 네이티브 (탐색/검증)

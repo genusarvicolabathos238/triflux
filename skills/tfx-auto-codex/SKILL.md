@@ -21,7 +21,7 @@ argument-hint: "\"작업 설명\" | N:agent_type \"작업 설명\""
 3. **Claude 네이티브 제거**
    - 실행 시 `TFX_NO_CLAUDE_NATIVE=1`로 강제.
 4. **고난도 설계는 xhigh**
-   - 설계/분해/비판 검토 성격의 작업은 `codex --profile xhigh` 기준으로 운용.
+   - 설계/분해/비판 검토 성격의 작업은 `codex --profile gpt54_xhigh` 기준으로 운용.
 
 ## 사용법
 

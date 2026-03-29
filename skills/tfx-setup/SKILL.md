@@ -93,7 +93,7 @@ Bash("triflux setup")
     - label: "생성 (Recommended)"
       description: "누락된 프로파일을 config.toml에 추가"
     - label: "건너뛰기"
-      description: "나중에 /codex-profile로 관리"
+      description: "나중에 /tfx-profile로 관리"
   ```
 
 #### 단계 4: CLI 진단
