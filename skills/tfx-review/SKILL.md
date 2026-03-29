@@ -1,6 +1,6 @@
 ---
 name: tfx-review
-description: 경량 코드 리뷰. Codex 단일 리뷰로 빠른 피드백.
+description: "코드 리뷰가 필요할 때 사용한다. 'review', '리뷰해줘', '코드 봐줘', '이거 괜찮아?', 'PR 리뷰', '변경사항 확인' 같은 요청에 반드시 사용. git diff, 특정 파일, 또는 최근 변경에 대한 빠른 피드백이 필요할 때 적극 활용."
 triggers:
   - review
   - 리뷰

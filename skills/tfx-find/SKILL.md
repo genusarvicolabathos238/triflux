@@ -1,6 +1,6 @@
 ---
-name: tfx-codebase-search
-description: Haiku 경량 코드베이스 탐색. Glob/Grep/Read 직접 접근으로 빠른 코드 검색. OMC explore 영감.
+name: tfx-find
+description: "코드베이스에서 파일, 함수, 클래스, 문자열을 빠르게 찾을 때 사용한다. '코드 검색', 'find in code', '어디에 있어?', '이 함수 어디서 쓰여?', '파일 찾아줘', '코드베이스 탐색' 같은 요청에 반드시 사용. 파일 위치, 심볼 사용처, 패턴 검색이 필요한 모든 상황에 적극 활용."
 triggers:
   - 코드 검색
   - codebase search
@@ -10,7 +10,7 @@ triggers:
 argument-hint: "<검색 패턴 또는 질문>"
 ---
 
-# tfx-codebase-search — Fast Codebase Explorer
+# tfx-find — Fast Codebase Explorer
 
 > OMC explore agent 오마주. Haiku의 속도 + Glob/Grep/Read의 정밀도.
 > "찾는 건 빠르게, 읽는 건 정확하게."
@@ -116,7 +116,7 @@ definition:
 ## 사용 예
 
 ```
-/tfx-codebase-search "createBridge 함수 정의와 사용처"
+/tfx-find "createBridge 함수 정의와 사용처"
 /코드 검색 "*.test.mjs 파일 목록"
 /find in code "TODO|FIXME|HACK 주석"
 /코드에서 찾기 "환경변수 사용하는 파일"

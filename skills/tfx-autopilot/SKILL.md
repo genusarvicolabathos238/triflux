@@ -1,6 +1,6 @@
 ---
 name: tfx-autopilot
-description: 경량 자율 실행. Codex가 직접 구현하고 Claude가 검증하는 빠른 자동화 루프.
+description: "간단한 작업을 자율적으로 구현해야 할 때 사용한다. 'autopilot', '자동으로', '알아서 해', '그냥 해줘', 'auto' 같은 요청에 반드시 사용. 명확한 단일 작업을 빠르게 자동 구현+검증할 때 적극 활용."
 triggers:
   - autopilot
   - 자동

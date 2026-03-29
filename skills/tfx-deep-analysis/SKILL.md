@@ -1,6 +1,6 @@
 ---
 name: tfx-deep-analysis
-description: 심층 3관점 분석. Claude(아키텍처) + Codex(구현/보안) + Gemini(UX/문서) → Tri-Debate → 합의 도출.
+description: "다각도 심층 분석이 필요할 때 사용한다. 'deep analyze', '심층 분석', '제대로 분석', '3관점 분석', '편향 없이 분석' 같은 요청에 사용. 아키텍처 결정, 기술 부채 평가, 대규모 리팩터링 전 분석에 적극 활용."
 triggers:
   - deep analyze
   - 심층 분석

@@ -1,6 +1,6 @@
 ---
 name: tfx-debate
-description: 3자 토론 스킬. Claude/Codex/Gemini가 주어진 주제를 독립 분석한 뒤 구조화된 토론으로 최적 답을 도출한다. Anti-herding 보장.
+description: "기술 선택, 아키텍처 비교, 설계 결정에서 3-CLI 구조화 토론으로 최적 답을 도출한다. 'A vs B', '뭐가 나을까', '비교해줘', '어떤 걸 쓸까', '장단점', 'tradeoff' 같은 비교/선택 요청에 반드시 사용한다. 단순 질문이 아닌 여러 옵션 사이의 결정이 필요할 때 적극 활용."
 triggers:
   - debate
   - 토론

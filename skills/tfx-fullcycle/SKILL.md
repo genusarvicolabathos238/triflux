@@ -1,6 +1,6 @@
 ---
-name: tfx-deep-autopilot
-description: 5-Phase 전체 개발 파이프라인. Expansion(Opus) → Planning(3자합의) → Execution(Codex+Gemini) → QA(3자독립리뷰) → Validation(Consensus>=70). OMC autopilot + Superpowers TDD + MetaGPT SOP 영감.
+name: tfx-fullcycle
+description: "복잡한 기능을 처음부터 끝까지 자율 개발해야 할 때 사용한다. 'deep autopilot', '풀 오토', '처음부터 끝까지', 'full auto', '전체 파이프라인으로' 같은 요청에 사용. 설계→계획→구현→QA→검증 전체 사이클이 필요한 대규모 기능에 적극 활용."
 triggers:
   - deep autopilot
   - 풀 오토
@@ -9,7 +9,7 @@ triggers:
 argument-hint: "<구현할 기능 전체 설명>"
 ---
 
-# tfx-deep-autopilot — Full Development Pipeline with Tri-CLI Consensus
+# tfx-fullcycle — Full Development Pipeline with Tri-CLI Consensus
 
 > 5-Phase 파이프라인: Expansion → Planning → Execution → QA → Validation.
 > OMC autopilot + Superpowers TDD + MetaGPT SOP 영감. 처음부터 끝까지 자율 실행.
@@ -189,7 +189,7 @@ Consensus 판정:
 ## 사용 예
 
 ```
-/tfx-deep-autopilot "JWT 인증 시스템 전체 구현. 로그인/로그아웃/리프레시/미들웨어/테스트"
-/tfx-deep-autopilot "풀 오토 — 결제 모듈을 Stripe에서 Toss Payments로 마이그레이션"
-/tfx-deep-autopilot "처음부터 끝까지 — REST API를 GraphQL로 점진적 전환, 기존 클라이언트 호환 유지"
+/tfx-fullcycle "JWT 인증 시스템 전체 구현. 로그인/로그아웃/리프레시/미들웨어/테스트"
+/tfx-fullcycle "풀 오토 — 결제 모듈을 Stripe에서 Toss Payments로 마이그레이션"
+/tfx-fullcycle "처음부터 끝까지 — REST API를 GraphQL로 점진적 전환, 기존 클라이언트 호환 유지"
 ```

@@ -1,6 +1,6 @@
 ---
 name: tfx-panel
-description: Deep 가상 전문가 패널 시뮬레이션. 주제에 맞는 전문가 5-10명을 선정하고 Claude/Codex/Gemini가 각 전문가 관점으로 토론하여 다관점 종합 결론을 도출한다.
+description: "여러 전문가의 의견이 필요한 복잡한 결정에 사용한다. 'panel', '패널', '전문가 의견', 'expert panel', '다양한 관점', '전문가한테 물어봐' 같은 요청에 반드시 사용. 아키텍처, 보안, 비즈니스 전략 등 전문가 시뮬레이션이 필요할 때 적극 활용."
 triggers:
   - panel
   - 패널

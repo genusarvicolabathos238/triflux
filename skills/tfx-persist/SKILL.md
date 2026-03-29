@@ -1,6 +1,6 @@
 ---
-name: tfx-ralph
-description: 3자 검증 기반 persistence loop. 작업 완료까지 멈추지 않되, 검증은 단일 agent가 아닌 Tri-CLI consensus로 수행한다.
+name: tfx-persist
+description: "작업이 완전히 끝날 때까지 멈추지 않고 반복 실행해야 할 때 사용한다. 'ralph', '끝까지 해', '멈추지 마', 'don't stop', '완료될 때까지', '다 될 때까지 계속' 같은 요청에 반드시 사용. 여러 기준을 모두 충족해야 하는 복잡한 구현 작업에 적극 활용."
 triggers:
   - ralph
   - don't stop
@@ -10,7 +10,7 @@ triggers:
 argument-hint: "<완료할 작업 설명>"
 ---
 
-# tfx-ralph — Tri-Verified Persistence Loop
+# tfx-persist — Tri-Verified Persistence Loop
 
 > OMC ralph 오마주. 핵심 차별점: 검증자가 단일 agent가 아니라 **3-CLI consensus**.
 > The boulder never stops — but it stops being wrong.
@@ -18,7 +18,7 @@ argument-hint: "<완료할 작업 설명>"
 ## 핵심 원리
 
 OMC ralph는 단일 verifier(code-reviewer 또는 critic)가 검증한다.
-tfx-ralph는 Claude/Codex/Gemini **3자 독립 검증**으로 편향 없는 완료 판단을 보장한다.
+tfx-persist는 Claude/Codex/Gemini **3자 독립 검증**으로 편향 없는 완료 판단을 보장한다.
 
 ## 워크플로우
 
@@ -135,7 +135,7 @@ Consensus Score < 70 → 미달 항목 재작업 후 재검증
 ## 사용 예
 
 ```
-/tfx-ralph "JWT 인증 미들웨어 구현. 로그인, 토큰 발급/검증, 리프레시, 테스트 80%+"
-/tfx-ralph "이 버그 수정해. PR #42의 모든 코멘트 해결될 때까지"
-/tfx-ralph "데이터베이스 마이그레이션 완료. 기존 데이터 무손실, 롤백 가능"
+/tfx-persist "JWT 인증 미들웨어 구현. 로그인, 토큰 발급/검증, 리프레시, 테스트 80%+"
+/tfx-persist "이 버그 수정해. PR #42의 모든 코멘트 해결될 때까지"
+/tfx-persist "데이터베이스 마이그레이션 완료. 기존 데이터 무손실, 롤백 가능"
 ```

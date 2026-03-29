@@ -1,6 +1,6 @@
 ---
 name: tfx-deep-research
-description: 딥 리서치 스킬. 쿼리 분해 → 3-CLI 병렬 멀티소스 검색 → 교차검증 → 합의 기반 보고서. STORM + GPT-Researcher 영감.
+description: "기술 비교, 아키텍처 조사, 경쟁사 분석 등 깊이 있는 리서치가 필요할 때 사용한다. '심층 조사', '자세히 알아봐', 'deep research', '전면 리서치', '비교 분석 보고서', '종합 리서치' 같은 요청에 반드시 사용. 단순 검색이 아닌 멀티소스 교차검증이 필요한 리서치에 적극 활용."
 triggers:
   - deep research
   - 딥 리서치

@@ -1,6 +1,6 @@
 ---
-name: tfx-sisyphus
-description: 모델 라우팅 자율 실행. IntentGate 분류 → Category routing(visual→Gemini, deep→Codex, quick→Haiku) → 실패 시 모델 승격. oh-my-openagent 영감.
+name: tfx-autoroute
+description: "작업 유형에 따라 최적 모델을 자동 선택하여 실행해야 할 때 사용한다. 'sisyphus', '시지프스', 'auto-route', '알아서 라우팅', '최적 모델로' 같은 요청에 사용. 어떤 CLI를 쓸지 모르겠을 때, 또는 실패 시 자동 모델 승격이 필요할 때 적극 활용."
 triggers:
   - sisyphus
   - 끝없이
@@ -10,7 +10,7 @@ triggers:
 argument-hint: "<작업 설명>"
 ---
 
-# tfx-sisyphus — Auto-Routing Autonomous Executor
+# tfx-autoroute — Auto-Routing Autonomous Executor
 
 > oh-my-openagent Sisyphus agent 오마주. 바위는 멈추지 않는다 — 그리고 올바른 산을 고른다.
 > "실패하면 더 강한 모델로. 성공할 때까지."
@@ -177,8 +177,8 @@ Primary Opus였다면: ~{opus_cost}K tokens
 ## 사용 예
 
 ```
-/tfx-sisyphus "이 함수의 타입 에러 수정해"
-/tfx-sisyphus "프로젝트 구조 분석해서 아키텍처 다이어그램 만들어"
-/tfx-sisyphus "README.md 한국어로 번역"
+/tfx-autoroute "이 함수의 타입 에러 수정해"
+/tfx-autoroute "프로젝트 구조 분석해서 아키텍처 다이어그램 만들어"
+/tfx-autoroute "README.md 한국어로 번역"
 /시지프스 "테스트 커버리지 80%까지 올려"
 ```

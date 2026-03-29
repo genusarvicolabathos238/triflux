@@ -1,6 +1,6 @@
 ---
-name: tfx-deslop
-description: Deep AI 슬롭 제거. 변경 파일 → 3자 독립 슬롭 감지(불필요 추상화, 중복, 과잉 에러 핸들링) → 2+ 합의 항목만 제거 → 회귀 테스트. OMC deslop 영감.
+name: tfx-prune
+description: "AI가 생성한 불필요한 코드(슬롭)를 제거할 때 사용한다. 'deslop', '슬롭 제거', 'anti-slop', '코드 정리', '불필요한 코드 제거', '과잉 추상화 정리' 같은 요청에 반드시 사용. AI 생성 코드의 중복, 불필요 추상화, 과잉 에러 핸들링을 정리할 때 적극 활용."
 triggers:
   - deslop
   - 슬롭 제거
@@ -10,7 +10,7 @@ triggers:
 argument-hint: "[파일 경로 또는 git diff 범위]"
 ---
 
-# tfx-deslop — Tri-Verified AI Slop Remover
+# tfx-prune — Tri-Verified AI Slop Remover
 
 > OMC ai-slop-cleaner 오마주. 핵심 차별점: 단일 판단이 아닌 **3자 독립 감지 + 합의** 기반 제거.
 > "AI가 만든 슬롭은 AI 3명이 합의해야 슬롭이다."
@@ -190,9 +190,9 @@ for each finding in ALL results:
 ## 사용 예
 
 ```
-/tfx-deslop
-/tfx-deslop src/auth/middleware.ts
-/tfx-deslop HEAD~5..HEAD
+/tfx-prune
+/tfx-prune src/auth/middleware.ts
+/tfx-prune HEAD~5..HEAD
 /정리 src/
 /anti-slop "과잉 에러 핸들링 제거"
 ```
