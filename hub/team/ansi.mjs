@@ -65,16 +65,92 @@ export function color(text, fg, bg) {
 export function bold(text)  { return `${BOLD}${text}${RESET}`; }
 export function dim(text)   { return `${DIM}${text}${RESET}`; }
 
+export function lerpRgb(a, b, t) {
+  return {
+    r: Math.round(a.r + (b.r - a.r) * t),
+    g: Math.round(a.g + (b.g - a.g) * t),
+    b: Math.round(a.b + (b.b - a.b) * t),
+  };
+}
+
+function rgbSeq(rgb, mode = 38) {
+  return `${ESC}[${mode};2;${rgb.r};${rgb.g};${rgb.b}m`;
+}
+
+function brightenRgb(rgb, amount = 0.3) {
+  return lerpRgb(rgb, { r: 255, g: 255, b: 255 }, amount);
+}
+
+function parseRgbSeq(seq) {
+  const match = typeof seq === "string"
+    ? seq.match(/\x1b\[(?:38|48);2;(\d+);(\d+);(\d+)m/)
+    : null;
+  if (!match) return null;
+  return {
+    r: Number.parseInt(match[1], 10),
+    g: Number.parseInt(match[2], 10),
+    b: Number.parseInt(match[3], 10),
+  };
+}
+
+function reapplyBackground(text, bgSeq) {
+  if (!bgSeq) return text;
+  return `${bgSeq}${String(text).replaceAll(RESET, `${RESET}${bgSeq}`)}${RESET}`;
+}
+
 // ── 박스 그리기 (유니코드 테두리) ──
 const BOX = { tl: "┌", tr: "┐", bl: "└", br: "┘", h: "─", v: "│", ml: "├", mr: "┤" };
 
-export function box(lines, width, borderColor = "") {
-  const bc = borderColor;
-  const rst = bc ? RESET : "";
-  const top = `${bc}${BOX.tl}${BOX.h.repeat(width - 2)}${BOX.tr}${rst}`;
-  const bot = `${bc}${BOX.bl}${BOX.h.repeat(width - 2)}${BOX.br}${rst}`;
-  const mid = `${bc}${BOX.ml}${BOX.h.repeat(width - 2)}${BOX.mr}${rst}`;
-  const body = lines.map((l) => `${bc}${BOX.v}${rst} ${padRight(l, width - 4)} ${bc}${BOX.v}${rst}`);
+function borderHighlightCell(width, totalRows, highlightPos) {
+  if (!Number.isFinite(highlightPos)) return null;
+  const perimeter = 2 * (width - 2) + 2 * totalRows;
+  if (perimeter <= 0) return null;
+  let pos = Math.floor(highlightPos) % perimeter;
+  if (pos < 0) pos += perimeter;
+
+  if (pos < width - 2) return { row: 0, col: pos + 1 };
+  pos -= width - 2;
+  if (pos < totalRows) return { row: pos, col: width - 1 };
+  pos -= totalRows;
+  if (pos < width - 2) return { row: totalRows - 1, col: width - 2 - pos };
+  pos -= width - 2;
+  return { row: totalRows - 1 - pos, col: 0 };
+}
+
+function renderBorderChar(glyph, row, col, highlightCell, borderSeq, highlightSeq) {
+  if (highlightCell && highlightCell.row === row && highlightCell.col === col) {
+    return `${highlightSeq}${glyph}${RESET}`;
+  }
+  return borderSeq ? `${borderSeq}${glyph}${RESET}` : glyph;
+}
+
+export function box(lines, width, borderColor = "", options = {}) {
+  const isFn = typeof borderColor === "function";
+  const totalRows = lines.length + 2;
+  const bc = isFn ? (row) => borderColor(row, totalRows) : () => borderColor;
+  const rst = (isFn || borderColor) ? RESET : "";
+  const highlightCell = borderHighlightCell(width, totalRows, options.highlightPos);
+  const highlightSeq = options.highlightColor
+    || (() => {
+      const parsed = parseRgbSeq(typeof borderColor === "string" ? borderColor : "");
+      return parsed ? rgbSeq(brightenRgb(parsed, 0.45)) : `${BOLD}${FG.white}`;
+    })();
+  const topChars = [BOX.tl, ...Array.from({ length: width - 2 }, () => BOX.h), BOX.tr];
+  const botChars = [BOX.bl, ...Array.from({ length: width - 2 }, () => BOX.h), BOX.br];
+  const top = topChars
+    .map((glyph, col) => renderBorderChar(glyph, 0, col, highlightCell, bc(0), highlightSeq))
+    .join("");
+  const bot = botChars
+    .map((glyph, col) => renderBorderChar(glyph, totalRows - 1, col, highlightCell, bc(totalRows - 1), highlightSeq))
+    .join("");
+  const mid = `${bc(Math.floor(totalRows / 2))}${BOX.ml}${BOX.h.repeat(width - 2)}${BOX.mr}${rst}`;
+  const body = lines.map((l, i) => {
+    const row = i + 1;
+    const content = options.titleFlashBg && i === 0
+      ? reapplyBackground(padRight(l, width - 4), options.titleFlashBg)
+      : padRight(l, width - 4);
+    return `${renderBorderChar(BOX.v, row, 0, highlightCell, bc(row), highlightSeq)} ${content} ${renderBorderChar(BOX.v, row, width - 1, highlightCell, bc(row), highlightSeq)}`;
+  });
   return { top, body, bot, mid };
 }
 
@@ -205,6 +281,12 @@ export const MOCHA = {
   surface0:  `${ESC}[38;2;49;50;68m`,    // #313244 surface0
 };
 
+const MOCHA_RGB = {
+  ok:       { r: 166, g: 227, b: 161 },
+  partial:  { r: 250, g: 179, b: 135 },
+  fail:     { r: 243, g: 139, b: 168 },
+};
+
 // ── badge 헬퍼 ──
 // statusBadge(status) → ANSI 색상 문자열
 export function statusBadge(status) {
@@ -231,13 +313,48 @@ export function statusBadge(status) {
 }
 
 // ── 진행률 바 ──
-// progressBar(percent, width) — percent: 0~100, ANSI colored bar string 반환
-export function progressBar(percent, width = 20) {
+// progressBar(percent, width, time) — percent: 0~100, time 전달 시 shimmer sweep
+export function progressBar(percent, width = 20, time) {
   const ratio = Math.max(0, Math.min(100, percent)) / 100;
   const filled = Math.round(ratio * width);
   const empty = width - filled;
-  const fillColor = percent >= 100 ? MOCHA.ok : percent >= 50 ? MOCHA.partial : MOCHA.fail;
-  return `${fillColor}${"█".repeat(filled)}${MOCHA.border}${"░".repeat(empty)}${RESET}`;
+  const fillRgb = percent >= 100 ? MOCHA_RGB.ok : percent >= 50 ? MOCHA_RGB.partial : MOCHA_RGB.fail;
+  const fillColor = rgbSeq(fillRgb);
+  let fillText = "█".repeat(filled);
+
+  if (filled > 0 && Number.isFinite(time)) {
+    const shinePos = Math.min(
+      filled - 1,
+      Math.floor(((((time % 2000) + 2000) % 2000) / 2000) * filled),
+    );
+    const shineColor = rgbSeq(brightenRgb(fillRgb, 0.3));
+    fillText = Array.from({ length: filled }, (_, idx) =>
+      idx === shinePos ? `${shineColor}█${RESET}` : `${fillColor}█${RESET}`
+    ).join("");
+  } else if (filled > 0) {
+    fillText = `${fillColor}${fillText}${RESET}`;
+  }
+
+  const emptyText = empty > 0 ? `${MOCHA.border}${"░".repeat(empty)}${RESET}` : "";
+  return `${fillText}${emptyText}`;
+}
+
+// ── 애니메이션 진행률 바 (shimmer sweep) ──
+export function animatedProgressBar(percent, width = 20, tick = 0) {
+  const ratio = Math.max(0, Math.min(100, percent)) / 100;
+  const filled = Math.round(ratio * width);
+  const empty = width - filled;
+  if (filled === 0 || percent >= 100) return progressBar(percent, width);
+  const baseClr = percent >= 50 ? MOCHA.partial : MOCHA.fail;
+  const pos = tick % (filled + 3);
+  let bar = "";
+  for (let i = 0; i < filled; i++) {
+    const d = Math.abs(i - pos);
+    if (d === 0) bar += `${ESC}[97m█`;
+    else if (d === 1) bar += `${baseClr}▓`;
+    else bar += `${baseClr}█`;
+  }
+  return `${bar}${MOCHA.border}${"░".repeat(empty)}${RESET}`;
 }
 
 // ── 상태 아이콘 ──
@@ -253,3 +370,9 @@ export const CLI_ICON = {
   gemini: `${FG.gemini}🔵${RESET}`,
   claude: `${FG.claude}🟠${RESET}`,
 };
+
+// ── 로딩 도트 (braille spinner) ──
+const BRAILLE_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+export function loadingDots(tick = 0, clr = MOCHA.thinking) {
+  return `${clr}${BRAILLE_FRAMES[tick % BRAILLE_FRAMES.length]}${RESET}`;
+}

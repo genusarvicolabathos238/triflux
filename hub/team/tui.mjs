@@ -61,22 +61,57 @@ function lerpRgb(a, b, t) {
   };
 }
 
-function heartbeat(status, shimmerIntensity = 0) {
+function rgbSeq(rgb, mode = 38) {
+  return `\x1b[${mode};2;${rgb.r};${rgb.g};${rgb.b}m`;
+}
+
+function pseudoRandomFrame(step, seed) {
+  return Math.abs(Math.imul(step + seed, 2654435761)) % SPINNER_FRAMES.length;
+}
+
+function heartbeat(status, shimmerIntensity = 0, statusChangedAt = 0, time = Date.now()) {
+  const transitionElapsed = statusChangedAt ? Math.max(0, time - statusChangedAt) : Number.POSITIVE_INFINITY;
+  if (transitionElapsed < 500) {
+    const step = Math.floor(transitionElapsed / 50);
+    const idx = pseudoRandomFrame(step, statusChangedAt % 997);
+    const targetColor = status === "failed" || status === "error"
+      ? MOCHA.fail
+      : status === "done" || status === "completed"
+        ? MOCHA.ok
+        : shimmerIntensity > 0
+          ? rgbSeq(lerpRgb(SPINNER_BASE_COLOR, SPINNER_SHIMMER, shimmerIntensity))
+          : MOCHA.executing;
+    return `${targetColor}${SPINNER_FRAMES[idx]}${RESET}`;
+  }
+
   if (status === "done" || status === "completed") return color("✓", MOCHA.ok);
   if (status === "failed" || status === "error") return color("✗", MOCHA.fail);
   if (status !== "running") return dim("○");
-  const elapsed = Date.now() - spinnerStart;
+  const elapsed = time - spinnerStart;
   const idx = Math.floor((elapsed / SPINNER_CYCLE_MS) * SPINNER_FRAMES.length) % SPINNER_FRAMES.length;
   const c = shimmerIntensity > 0
     ? lerpRgb(SPINNER_BASE_COLOR, SPINNER_SHIMMER, shimmerIntensity)
     : SPINNER_BASE_COLOR;
-  return `\x1b[38;2;${c.r};${c.g};${c.b}m${SPINNER_FRAMES[idx]}${RESET}`;
+  return `${rgbSeq(c)}${SPINNER_FRAMES[idx]}${RESET}`;
 }
 
-function currentShimmer() {
-  const elapsed = Date.now() - spinnerStart;
-  const t = (elapsed % SPINNER_CYCLE_MS) / SPINNER_CYCLE_MS;
+function currentShimmer(time = Date.now()) {
+  const elapsed = time - spinnerStart;
+  const quantized = Math.floor(elapsed / 80) * 80;
+  const t = (quantized % SPINNER_CYCLE_MS) / SPINNER_CYCLE_MS;
   return 0.5 * (1 + Math.sin(t * Math.PI * 2));
+}
+
+// ── activity wave — Tier1 헤더용 미니 파형 ──
+const WAVE_CHARS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+function activityWave(tick, count = 4) {
+  let wave = "";
+  for (let i = 0; i < count; i++) {
+    const phase = tick * 0.3 + i * 1.5;
+    const idx = Math.floor((Math.sin(phase) * 0.5 + 0.5) * (WAVE_CHARS.length - 1));
+    wave += WAVE_CHARS[idx];
+  }
+  return `${MOCHA.executing}${wave}${RESET}`;
 }
 
 const GRID_GAP = 2;
@@ -200,6 +235,13 @@ const MOCHA_RGB = {
   executing: { r: 116, g: 199, b: 236 },
   muted:     { r: 147, g: 153, b: 178 },
   border:    { r: 69,  g: 71,  b: 90  },
+  blue:      { r: 137, g: 180, b: 250 },
+  sky:       { r: 116, g: 199, b: 236 },
+  yellow:    { r: 249, g: 226, b: 175 },
+  peach:     { r: 250, g: 179, b: 135 },
+  maroon:    { r: 235, g: 160, b: 172 },
+  surface0:  { r: 49,  g: 50,  b: 68  },
+  thinking:  { r: 203, g: 166, b: 247 },
 };
 
 function statusToRgb(status) {
@@ -211,15 +253,61 @@ function statusToRgb(status) {
 }
 
 const FADE_DURATION_MS = 1500;
+const FLASH_PHASE_MS = 250;
+const CARD_GLOW_MS = 3000;
 
-function fadeBorderColor(currentStatus, prevStatus, changedAt) {
+// Effect 1: Pulse border — running 워커 보더가 heartbeat 동기 breathing
+function pulseBorderColor(statusRgb, time = Date.now()) {
+  const intensity = 0.3 + 0.7 * currentShimmer(time);
+  const c = lerpRgb(MOCHA_RGB.border, statusRgb, intensity);
+  return rgbSeq(c);
+}
+
+// Effect 2: Gradient border — focus pane 보더 상단→하단 그라데이션
+function gradientBorderFn(topRgb, bottomRgb) {
+  return (row, totalRows) => {
+    const t = totalRows <= 1 ? 0 : row / (totalRows - 1);
+    const c = lerpRgb(topRgb, bottomRgb, t);
+    return `\x1b[38;2;${c.r};${c.g};${c.b}m`;
+  };
+}
+
+// Effect 3: Flash-fade border — 상태 변경 시 백색 플래시 → 페이드아웃
+function flashFadeBorderColor(currentStatus, prevStatus, changedAt) {
   const elapsed = Date.now() - (changedAt || 0);
-  if (elapsed >= FADE_DURATION_MS || !prevStatus) return MOCHA.border;
-  const t = Math.min(1, elapsed / FADE_DURATION_MS);
-  const from = statusToRgb(currentStatus);
-  const to = MOCHA_RGB.border;
-  const c = lerpRgb(from, to, t);
+  if (elapsed >= FADE_DURATION_MS || !prevStatus) return null;
+  const statusRgb = statusToRgb(currentStatus);
+  if (elapsed < FLASH_PHASE_MS) {
+    const t = elapsed / FLASH_PHASE_MS;
+    const bright = { r: 255, g: 255, b: 255 };
+    const c = lerpRgb(bright, statusRgb, t);
+    return `\x1b[38;2;${c.r};${c.g};${c.b}m`;
+  }
+  const t = (elapsed - FLASH_PHASE_MS) / (FADE_DURATION_MS - FLASH_PHASE_MS);
+  const c = lerpRgb(statusRgb, MOCHA_RGB.border, t);
   return `\x1b[38;2;${c.r};${c.g};${c.b}m`;
+}
+
+function easeOutCubic(t) {
+  return 1 - ((1 - t) ** 3);
+}
+
+function borderHighlightPosition(width, bodyLines, time = Date.now()) {
+  const totalRows = bodyLines + 2;
+  const perimeter = 2 * (width - 2) + 2 * totalRows;
+  if (perimeter <= 0) return undefined;
+  return Math.floor(time / 120) % perimeter;
+}
+
+function titleFlash(status, changeElapsed) {
+  const isCompleted = status === "completed" || status === "done" || status === "ok";
+  const isFailed = status === "failed" || status === "error" || status === "fail";
+  if ((!isCompleted && !isFailed) || changeElapsed > 800) return null;
+  const flashRgb = isCompleted ? MOCHA_RGB.ok : MOCHA_RGB.fail;
+  const bgRgb = changeElapsed <= 300
+    ? flashRgb
+    : lerpRgb(flashRgb, MOCHA_RGB.surface0, clamp((changeElapsed - 300) / 500, 0, 1));
+  return rgbSeq(bgRgb, 48);
 }
 
 function dedupeRole(role, name, cli) {
@@ -320,22 +408,28 @@ function countStatuses(names, workers) {
 }
 
 // ── Tier1: 상단 고정 1행 ─────────────────────────────────────────────────
-function phaseColor(phase) {
-  if (phase === "exec" || phase === "executing") return MOCHA.blue;
-  if (phase === "verify" || phase === "verifying") return MOCHA.yellow;
-  if (phase === "fix" || phase === "fixing") return MOCHA.red;
+function phaseColor(phase, time = Date.now()) {
+  const shimmer = currentShimmer(time);
+  if (phase === "exec" || phase === "executing") return rgbSeq(lerpRgb(MOCHA_RGB.blue, MOCHA_RGB.sky, shimmer));
+  if (phase === "verify" || phase === "verifying") return rgbSeq(lerpRgb(MOCHA_RGB.yellow, MOCHA_RGB.peach, shimmer));
+  if (phase === "fix" || phase === "fixing") return rgbSeq(lerpRgb(MOCHA_RGB.fail, MOCHA_RGB.maroon, shimmer));
   return FG.accent;
 }
 
-function buildTier1(names, workers, pipeline, elapsed, width, version) {
+function buildTier1(names, workers, pipeline, elapsed, width, version, time = Date.now()) {
   const { ok, partial, failed, running } = countStatuses(names, workers);
   const phase = pipeline.phase || "exec";
   const row1 = truncate(
-    `${color("▲", FG.triflux)} v${version} ${dim("│")} ${color(phase, phaseColor(phase))} ${dim("│")} ${elapsed}s ${dim("│")} ` +
-    `${color(`✓${ok}`, MOCHA.ok)} ${color(`◑${partial}`, MOCHA.partial)} ${color(`✗${failed}`, MOCHA.fail)} ${dim(`▶${running}`)}  ${color("Tab:focus • j/k/↑↓:nav • f:follow • r:raw • l:tab • 1-9:jump", MOCHA.subtext)}`,
+    `${color("▲", FG.triflux)} v${version} ${dim("│")} ${color(phase, phaseColor(phase, time))} ${dim("│")} ${elapsed}s ${dim("│")} ` +
+    `${color(`✓${ok}`, MOCHA.ok)} ${color(`◑${partial}`, MOCHA.partial)} ${color(`✗${failed}`, MOCHA.fail)} ${dim(`▶${running}`)}${running > 0 ? ` ${activityWave(spinnerTick)}` : ""}`,
     width,
   );
-  return [row1];
+  const keysHint = color("Tab:focus • j/k/↑↓:nav • f:follow • r:raw • l:tab • n:recent • 1-9:jump", MOCHA.subtext);
+  const hintWidth = wcswidth(stripAnsi(keysHint));
+  const row2 = hintWidth >= width
+    ? truncate(keysHint, width)
+    : padRight(`${" ".repeat(width - hintWidth)}${keysHint}`, width);
+  return [row1, row2];
 }
 
 // ── 카드 렌더러 (Tier2 worker rail) ─────────────────────────────────────
@@ -368,33 +462,46 @@ function buildWorkerRail(name, st, opts = {}) {
     width,
     selected = false,
     focused = false,  // rail 포커스 여부
+    previousSelected = false,
     rawMode = false,
     compact = false,
+    time = Date.now(),
   } = opts;
   const innerWidth = Math.max(12, width - 4);
   const cli = st.cli || "codex";
   const role = sanitizeOneLine(st.role);
   const status = runtimeStatus(st);
   const sec = Number.isFinite(st._logSec) ? st._logSec : 0;
+  const changeElapsed = st._statusChangedAt ? Math.max(0, time - st._statusChangedAt) : Number.POSITIVE_INFINITY;
 
   // Tier2 행 1: 이름 + CLI + role
-  const selMark = selected ? (focused ? color("▶", MOCHA.blue) : color(">", FG.triflux)) : " ";
-  const hb = heartbeat(status, status === "running" ? currentShimmer() : 0);
+  const selMark = selected
+    ? (focused ? color("▶", MOCHA.blue) : color(">", FG.triflux))
+    : previousSelected
+      ? dim("~")
+      : " ";
+  const hb = heartbeat(status, status === "running" ? currentShimmer(time) : 0, st._statusChangedAt, time);
   const displayRole = dedupeRole(role, name, cli);
   const title = truncate(
     `${selMark} ${hb} ${color(name, FG.triflux)} ${color("•", MOCHA.overlay)} ${color(cli, cliColor(cli))}${displayRole ? ` ${color(`(${displayRole})`, MOCHA.overlay)}` : ""}`,
     innerWidth,
   );
 
-  // status-specific border: focused→mauve, selected→bright, non-selected→dimmed tint
+  const cardWidth = Math.max(MIN_CARD_WIDTH, width);
+  const borderHighlight = focused ? borderHighlightPosition(cardWidth, compact ? 2 : 6, time) : undefined;
+  const titleFlashBg = titleFlash(status, changeElapsed);
+
+  // status-specific border: focused→mauve, selected→bright, non-selected→glow decay
   const statusBorderColor = (() => {
     if (focused) return MOCHA.thinking;
+    if (selected && (status === "running" || status === "in_progress")) {
+      return pulseBorderColor(statusToRgb(status), time);
+    }
     if (selected) return statusColor(status);
-    // Non-selected: status-tinted border (50% blend toward border gray)
     const from = statusToRgb(status);
-    const to = MOCHA_RGB.border;
-    const c = lerpRgb(from, to, 0.5);
-    return `\x1b[38;2;${c.r};${c.g};${c.b}m`;
+    const decayBase = st._statusChangedAt ? clamp(changeElapsed / CARD_GLOW_MS, 0, 1) : 1;
+    const decayT = easeOutCubic(decayBase);
+    return rgbSeq(lerpRgb(from, MOCHA_RGB.border, 0.5 + (0.5 * decayT)));
   })();
 
   if (compact) {
@@ -407,7 +514,10 @@ function buildWorkerRail(name, st, opts = {}) {
     );
     const verdict = sanitizeOneLine(st.handoff?.verdict || st.summary || st.snapshot, status);
     const compactLine2 = truncate(color(verdict, MOCHA.text), innerWidth);
-    const framed = box([compactLine1, compactLine2], Math.max(MIN_CARD_WIDTH, width), statusBorderColor);
+    const framed = box([compactLine1, compactLine2], cardWidth, statusBorderColor, {
+      highlightPos: borderHighlight,
+      titleFlashBg,
+    });
     return [framed.top, ...framed.body, framed.bot];
   }
 
@@ -422,8 +532,9 @@ function buildWorkerRail(name, st, opts = {}) {
   const progress = Number.isFinite(st.progress) ? clamp(st.progress, 0, 1) : (status === "running" ? 0.3 : 1);
   const percent = Math.round(progress * 100);
   const barWidth = clamp(Math.floor(innerWidth * 0.3), 8, 16);
+  const bar = progressBar(percent, barWidth, time);
   const progressLine = truncate(
-    `${progressBar(percent, barWidth)} ${color(`${String(percent).padStart(3)}%`, MOCHA.text)}`,
+    `${bar} ${color(`${String(percent).padStart(3)}%`, MOCHA.text)}`,
     innerWidth,
   );
 
@@ -442,7 +553,10 @@ function buildWorkerRail(name, st, opts = {}) {
     truncate(`${color("files", MOCHA.overlay)} ${color(files, MOCHA.subtext)}`, innerWidth),
   ];
 
-  const framed = box(lines, Math.max(MIN_CARD_WIDTH, width), statusBorderColor);
+  const framed = box(lines, cardWidth, statusBorderColor, {
+    highlightPos: borderHighlight,
+    titleFlashBg,
+  });
   return [framed.top, ...framed.body, framed.bot];
 }
 
@@ -455,6 +569,7 @@ function buildFocusPane(name, st, opts = {}) {
     followTail = false,
     rawMode = false,
     focused = false,
+    time = Date.now(),
   } = opts;
   const innerWidth = Math.max(12, width - 4);
 
@@ -523,9 +638,14 @@ function buildFocusPane(name, st, opts = {}) {
     truncate(scrollInfo, innerWidth),
   ];
 
-  // focused pane gets bright border, unfocused gets dim
-  const borderColor = focused ? MOCHA.blue : MOCHA.border;
-  const framed = box(contentLines, Math.max(MIN_CARD_WIDTH, width), borderColor);
+  // Effect 2: focused pane gets gradient border (blue→border), unfocused gets dim
+  const borderColor = focused
+    ? gradientBorderFn(MOCHA_RGB.blue, MOCHA_RGB.border)
+    : MOCHA.border;
+  const paneWidth = Math.max(MIN_CARD_WIDTH, width);
+  const framed = box(contentLines, paneWidth, borderColor, {
+    highlightPos: focused ? borderHighlightPosition(paneWidth, contentLines.length, time) : undefined,
+  });
   return [framed.top, ...framed.body, framed.bot];
 }
 
@@ -540,9 +660,50 @@ function buildSummaryBar(names, workers, selectedWorker, pipeline, width, versio
     return padRight(truncate(label, maxChipWidth), maxChipWidth);
   });
   const chipsLine = truncate(chips.join(color(" │ ", MOCHA.overlay)), width - 4);
-  const keysLine = truncate(color("Tab:focus • j/k/↑↓:nav • f:follow • r:raw • l:tab • 1-9:jump", MOCHA.subtext), width - 4);
+  const keysLine = truncate(color("Tab:focus • j/k/↑↓:nav • f:follow • r:raw • l:tab • n:recent • 1-9:jump", MOCHA.subtext), width - 4);
   const framed = box([chipsLine, keysLine], width);
   return [framed.top, ...framed.body, framed.bot];
+}
+
+// ── help overlay ──────────────────────────────────────────────────────────
+function buildHelpOverlay(width, height) {
+  const innerWidth = Math.min(50, width - 6);
+  const helpLines = [
+    color("  Keyboard Shortcuts", FG.triflux),
+    "",
+    `  ${color("Tab", MOCHA.blue)}        rail ↔ detail 포커스 전환`,
+    `  ${color("j/↓", MOCHA.blue)}        다음 워커 / 스크롤 아래`,
+    `  ${color("k/↑", MOCHA.blue)}        이전 워커 / 스크롤 위`,
+    `  ${color("1-9", MOCHA.blue)}        워커 직접 선택`,
+    `  ${color("n", MOCHA.blue)}          최근 상태 변경 워커 선택`,
+    `  ${color("f", MOCHA.blue)}          follow-tail 토글`,
+    `  ${color("r", MOCHA.blue)}          raw mode 토글`,
+    `  ${color("l", MOCHA.blue)}          탭 전환 (Log/Detail/Files)`,
+    `  ${color("g", MOCHA.blue)}          focus pane 상단 점프`,
+    `  ${color("G", MOCHA.blue)}          focus pane 하단 점프`,
+    `  ${color("PgUp", MOCHA.blue)}       페이지 위 스크롤`,
+    `  ${color("PgDn", MOCHA.blue)}       페이지 아래 스크롤`,
+    `  ${color("Shift+↑↓", MOCHA.blue)}   워커 선택 + 포커스 이동`,
+    `  ${color("Shift+←→", MOCHA.blue)}   rail ↔ detail 포커스`,
+    `  ${color("h/?", MOCHA.blue)}        이 도움말 토글`,
+    `  ${color("q", MOCHA.blue)}          대시보드 종료`,
+    "",
+    dim("  아무 키나 눌러 닫기"),
+  ];
+  const framed = box(helpLines, innerWidth + 4, MOCHA.blue);
+  const framedRows = [framed.top, ...framed.body, framed.bot];
+  const topPad = Math.max(0, Math.floor((height - framedRows.length) / 2));
+  const leftPad = " ".repeat(Math.max(0, Math.floor((width - innerWidth - 4) / 2)));
+  const result = [];
+  for (let i = 0; i < height; i++) {
+    const fi = i - topPad;
+    if (fi >= 0 && fi < framedRows.length) {
+      result.push(`${leftPad}${framedRows[fi]}`);
+    } else {
+      result.push("");
+    }
+  }
+  return result;
 }
 
 // ── joinColumns ───────────────────────────────────────────────────────────
@@ -628,12 +789,14 @@ export function createLogDashboard(opts = {}) {
   let closed = false;
   let frameCount = 0;
   let selectedWorker = null;
+  let previousSelectedWorker = null;
   // focus: "rail" | "detail"
   let focus = "rail";
   let detailScrollOffset = 0;
   let followTail = false;
   let rawMode = false;
   let focusTab = "log"; // "log" | "detail" | "files"
+  let helpOverlay = false;
   let inputAttached = false;
   let rawModeEnabled = false;
 
@@ -678,13 +841,34 @@ export function createLogDashboard(opts = {}) {
     if (!selectedWorker || !workers.has(selectedWorker)) selectedWorker = names[0];
   }
 
+  function setSelectedWorker(nextWorker, { preserveTrail = true } = {}) {
+    if (!nextWorker || nextWorker === selectedWorker) return;
+    if (preserveTrail && selectedWorker && workers.has(selectedWorker)) {
+      previousSelectedWorker = selectedWorker;
+    }
+    selectedWorker = nextWorker;
+    detailScrollOffset = 0;
+  }
+
   function selectRelative(offset) {
     const names = visibleWorkerNames();
     if (names.length === 0) return;
     ensureSelectedWorker(names);
     const idx = Math.max(0, names.indexOf(selectedWorker));
-    selectedWorker = names[(idx + offset + names.length) % names.length];
-    detailScrollOffset = 0;
+    setSelectedWorker(names[(idx + offset + names.length) % names.length]);
+    render();
+  }
+
+  function selectMostRecentChangedWorker() {
+    const names = visibleWorkerNames();
+    if (names.length === 0) return;
+    ensureSelectedWorker(names);
+    const target = names.reduce((best, name) => {
+      const changedAt = workers.get(name)?._statusChangedAt || 0;
+      const bestChangedAt = workers.get(best)?._statusChangedAt || 0;
+      return changedAt > bestChangedAt ? name : best;
+    }, names[0]);
+    setSelectedWorker(target);
     render();
   }
 
@@ -694,10 +878,28 @@ export function createLogDashboard(opts = {}) {
     render();
   }
 
+  // ── doClose (내부 함수) ─────────────────────────────────────────────
+  function doClose() {
+    if (closed) return;
+    if (timer) clearInterval(timer);
+    if (inputAttached && typeof input?.off === "function") input.off("data", handleInput);
+    if (rawModeEnabled && typeof input?.setRawMode === "function") input.setRawMode(false);
+    if (inputAttached && typeof input?.pause === "function") input.pause();
+    exitAltScreen();
+    closed = true;
+  }
+
   // ── 키 입력 ──────────────────────────────────────────────────────────
   function handleInput(chunk) {
     const key = String(chunk);
     if (key === "\u0003") return; // Ctrl-C
+
+    // Help overlay: 아무 키나 누르면 닫기
+    if (helpOverlay) {
+      helpOverlay = false;
+      render();
+      return;
+    }
 
     // Tab: rail ↔ detail 포커스 전환
     if (key === "\t") {
@@ -722,6 +924,14 @@ export function createLogDashboard(opts = {}) {
       if (key === "k" || key === "\u001b[A") { selectRelative(-1); return; }
     }
 
+    // g: focus pane 상단 점프
+    if (key === "g") { followTail = false; detailScrollOffset = 0; render(); return; }
+    // G: focus pane 하단 점프
+    if (key === "G") { followTail = true; detailScrollOffset = 0; render(); return; }
+    // PgUp/PgDn: 페이지 단위 스크롤
+    const pageSize = Math.max(1, Math.floor(getViewportRows() / 2));
+    if (key === "\x1b[5~") { scrollDetail(-pageSize); return; } // PgUp
+    if (key === "\x1b[6~") { scrollDetail(pageSize); return; }  // PgDn
     // f: follow-tail 토글
     if (key === "f") { followTail = !followTail; if (followTail) detailScrollOffset = 0; render(); return; }
     // r: raw mode 토글
@@ -734,11 +944,17 @@ export function createLogDashboard(opts = {}) {
       render();
       return;
     }
+    // n: 가장 최근 상태 변경 워커로 이동
+    if (key === "n") { selectMostRecentChangedWorker(); return; }
+    // h/?: 도움말 오버레이 토글
+    if (key === "h" || key === "?") { helpOverlay = true; render(); return; }
+    // q: 대시보드 종료
+    if (key === "q") { doClose(); return; }
     // 1-9: 워커 직접 선택
     if (/^[1-9]$/.test(key)) {
       const names = visibleWorkerNames();
       const target = names[Number.parseInt(key, 10) - 1];
-      if (target) { selectedWorker = target; detailScrollOffset = 0; render(); }
+      if (target) { setSelectedWorker(target); render(); }
       return;
     }
   }
@@ -773,10 +989,17 @@ export function createLogDashboard(opts = {}) {
 
     const totalCols = getViewportColumns();
     const totalRows = getViewportRows();
+
+    // Help overlay: 전체 화면 오버레이
+    if (helpOverlay) {
+      return buildHelpOverlay(totalCols, totalRows);
+    }
+
     const elapsed = nowElapsedSec();
+    const renderTime = Date.now();
 
     // Tier1: 상단 고정 2행
-    const tier1 = buildTier1(names, workers, pipeline, elapsed, totalCols, VERSION);
+    const tier1 = buildTier1(names, workers, pipeline, elapsed, totalCols, VERSION, renderTime);
 
     // 레이아웃 결정
     let effectiveLayout = layoutHint;
@@ -800,6 +1023,7 @@ export function createLogDashboard(opts = {}) {
         rawMode,
         focused: focus === "detail",
         activeTab: focusTab,
+        time: renderTime,
       });
       return [...tier1, ...summaryBar, ...focusPane];
     }
@@ -807,12 +1031,14 @@ export function createLogDashboard(opts = {}) {
     // 좌우 분할: Left Rail (30%) | Right Focus (70%)
     // 목업: Tier2 Left Rail + Tier3 Focus 나란히 렌더링
     const GAP = 1; // rail과 focus 사이 구분선
-    const railWidth = Math.max(MIN_CARD_WIDTH, Math.floor(totalCols * 0.25));
+    const railRatio = focus === "detail" ? 0.20 : 0.30;
+    const railWidth = Math.max(MIN_CARD_WIDTH, Math.floor(totalCols * railRatio));
     const focusWidth = totalCols - railWidth - GAP;
     const bodyHeight = Math.max(6, totalRows - tier1.length - 1); // -1 for status bar
 
-    // compact 자동 적용: viewport 행이 20 미만이면 2-line 카드
-    const useCompact = totalRows < 20;
+    // 반응형 compact: 워커 카드가 가용 높이 초과 시 자동 전환
+    const normalCardHeight = 8; // box top/bot + 6 content lines
+    const useCompact = names.length * normalCardHeight > bodyHeight;
 
     // Left Rail: 워커 카드 세로 스택
     const railLines = [];
@@ -820,9 +1046,11 @@ export function createLogDashboard(opts = {}) {
       const card = buildWorkerRail(name, workers.get(name), {
         width: railWidth,
         selected: name === selectedWorker,
+        previousSelected: name === previousSelectedWorker,
         focused: focus === "rail" && name === selectedWorker,
         rawMode,
         compact: useCompact,
+        time: renderTime,
       });
       railLines.push(...card);
     }
@@ -841,6 +1069,7 @@ export function createLogDashboard(opts = {}) {
         rawMode,
         focused: focus === "detail",
         activeTab: focusTab,
+        time: renderTime,
       });
     }
     while (focusLines.length < bodyHeight) focusLines.push(padRight("", focusWidth));
@@ -899,10 +1128,14 @@ export function createLogDashboard(opts = {}) {
     if (closed) return;
     frameCount++;
     spinnerTick++;
-    if (isTTY) {
-      renderAltScreen();
-    } else {
-      renderAppendOnly();
+    try {
+      if (isTTY) {
+        renderAltScreen();
+      } else {
+        renderAppendOnly();
+      }
+    } finally {
+      previousSelectedWorker = null;
     }
   }
 
@@ -950,7 +1183,7 @@ export function createLogDashboard(opts = {}) {
 
     selectWorker(name) {
       if (!workers.has(name)) return;
-      selectedWorker = name;
+      setSelectedWorker(name);
     },
 
     toggleDetail(force) {
@@ -994,14 +1227,16 @@ export function createLogDashboard(opts = {}) {
       return layoutHint;
     },
 
+    toggleHelp(force) {
+      helpOverlay = typeof force === "boolean" ? force : !helpOverlay;
+    },
+
+    isHelpVisible() {
+      return helpOverlay;
+    },
+
     close() {
-      if (closed) return;
-      if (timer) clearInterval(timer);
-      if (inputAttached && typeof input?.off === "function") input.off("data", handleInput);
-      if (rawModeEnabled && typeof input?.setRawMode === "function") input.setRawMode(false);
-      if (inputAttached && typeof input?.pause === "function") input.pause();
-      exitAltScreen();
-      closed = true;
+      doClose();
     },
   };
 }
