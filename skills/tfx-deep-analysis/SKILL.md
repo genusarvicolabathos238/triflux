@@ -46,8 +46,9 @@ Claude가 분석 대상을 파싱하고 범위를 정의:
 **3개 CLI가 동시에, 상호 결과를 보지 않고 전문 관점에서 분석한다.**
 
 ```
-Claude Opus (아키텍처/설계, background):
-  "소프트웨어 아키텍트로서 분석하라:
+Claude Opus (아키텍처/설계):
+  Agent(subagent_type="oh-my-claudecode:architect", run_in_background=true)
+  프롬프트: "소프트웨어 아키텍트로서 분석하라:
    대상: {target}
 
    분석 렌즈:
@@ -61,35 +62,39 @@ Claude Opus (아키텍처/설계, background):
            architecture_diagram: '텍스트 기반 구조도',
            health_score: 0-100 }"
 
-Codex (구현/성능/보안, background):
-  codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
-  "시니어 엔지니어+보안 전문가로서 분석하라:
-   대상: {target}
+CLI 워커 headless dispatch (Codex + Gemini 동시, MANDATORY):
+  Bash("tfx multi --teammate-mode headless --auto-attach --dashboard \
+    --assign 'codex:{아래 Codex 프롬프트}:security-engineer' \
+    --assign 'gemini:{아래 Gemini 프롬프트}:ux-engineer' \
+    --timeout 600")
 
-   분석 렌즈:
-   1. 구현 품질 — 복잡도, 중복, 에러 핸들링
-   2. 성능 — 알고리즘 효율, 메모리 패턴, I/O 병목
-   3. 보안 — OWASP Top 10, 입력 검증, 인증/인가
-   4. 안정성 — 에러 전파, 장애 격리, 리소스 관리
-   5. 기술 부채 — deprecated API, TODO, 하드코딩
+  Codex 프롬프트:
+    "시니어 엔지니어+보안 전문가로서 분석하라:
+     대상: {target}
 
-   JSON: { findings: [...], metrics: {complexity, loc, tech_debt_hours},
-           health_score: 0-100 }"
+     분석 렌즈:
+     1. 구현 품질 — 복잡도, 중복, 에러 핸들링
+     2. 성능 — 알고리즘 효율, 메모리 패턴, I/O 병목
+     3. 보안 — OWASP Top 10, 입력 검증, 인증/인가
+     4. 안정성 — 에러 전파, 장애 격리, 리소스 관리
+     5. 기술 부채 — deprecated API, TODO, 하드코딩
 
-Gemini (UX/문서화/접근성, background):
-  gemini -y -p \
-  "UX 엔지니어+테크니컬 라이터로서 분석하라:
-   대상: {target}
+     JSON: { findings: [...], metrics: {complexity, loc, tech_debt_hours},
+             health_score: 0-100 }"
 
-   분석 렌즈:
-   1. DX(개발자 경험) — API 직관성, 에러 메시지, 사용 용이성
-   2. 문서화 — JSDoc/주석 품질, README, 예제 코드
-   3. 접근성 — UI가 있으면 WCAG 2.1 AA, 키보드/스크린리더
-   4. 국제화 — 하드코딩 문자열, 로케일 처리
-   5. 네이밍 — 일관성, 도메인 언어, 가독성
+  Gemini 프롬프트:
+    "UX 엔지니어+테크니컬 라이터로서 분석하라:
+     대상: {target}
 
-   JSON: { findings: [...], documentation_score: 0-100,
-           health_score: 0-100 }"
+     분석 렌즈:
+     1. DX(개발자 경험) — API 직관성, 에러 메시지, 사용 용이성
+     2. 문서화 — JSDoc/주석 품질, README, 예제 코드
+     3. 접근성 — UI가 있으면 WCAG 2.1 AA, 키보드/스크린리더
+     4. 국제화 — 하드코딩 문자열, 로케일 처리
+     5. 네이밍 — 일관성, 도메인 언어, 가독성
+
+     JSON: { findings: [...], documentation_score: 0-100,
+             health_score: 0-100 }"
 ```
 
 ### Phase 3: Tri-Debate (교차검증)

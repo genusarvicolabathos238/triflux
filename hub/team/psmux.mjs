@@ -758,7 +758,7 @@ export function startCapture(sessionName, paneNameOrTarget) {
  * CLI 명령(codex/gemini)이 psmux pane의 PowerShell 환경에서 단축 플래그 충돌을
  * 일으키는 문제를 방지하기 위해 bash -c '...' 로 감싼다.
  * - codex -o flag → PS -OutVariable/OutBuffer 충돌
- * - gemini -p flag → PS -ProgressAction/PipelineVariable 충돌
+ * - gemini --prompt flag (v8.6.0: -p → --prompt, PS 충돌 해소)
  * @param {string} cmd
  * @returns {string}
  */

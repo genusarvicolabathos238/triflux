@@ -20,20 +20,22 @@ argument-hint: "<구현할 기능 설명>"
 ### Round 1: 독립 계획 (Anti-Herding)
 
 ```
-Claude Opus (Planner):
+Claude Opus (Planner, Agent):
   "소프트웨어 아키텍트로서 {feature}의 구현 계획을 수립하라.
    태스크 분해, 순서, 의존성, 검증 방법 포함.
    JSON: { tasks, dependencies, risks, complexity, reasoning }"
 
-Codex (Architect):
-  "시니어 엔지니어로서 {feature}의 기술적 설계를 작성하라.
-   파일 구조, API 인터페이스, 데이터 모델, 에러 처리 포함.
-   JSON: { design, file_changes, interfaces, data_models, risks }"
+> **MANDATORY: Codex/Gemini 계획 라운드는 headless dispatch로 실행**
 
-Gemini (Critic):
-  "QA/보안 전문가로서 {feature} 구현 시 예상되는 문제를 분석하라.
+Codex (Architect) + Gemini (Critic) — Bash (background, headless dispatch):
+  Bash("tfx multi --teammate-mode headless --auto-attach --dashboard \
+    --assign 'codex:시니어 엔지니어로서 {feature}의 기술적 설계를 작성하라.
+   파일 구조, API 인터페이스, 데이터 모델, 에러 처리 포함.
+   JSON: { design, file_changes, interfaces, data_models, risks }:architect' \
+    --assign 'gemini:QA/보안 전문가로서 {feature} 구현 시 예상되는 문제를 분석하라.
    엣지 케이스, 보안 위협, 성능 병목, 테스트 전략 포함.
-   JSON: { edge_cases, security_risks, performance_concerns, test_strategy }"
+   JSON: { edge_cases, security_risks, performance_concerns, test_strategy }:critic' \
+    --timeout 600")
 ```
 
 ### Round 2: 교차 검토
@@ -41,20 +43,22 @@ Gemini (Critic):
 각 CLI에게 다른 두 CLI의 결과를 제시:
 
 ```
-Claude에게:
+Claude에게 (Agent):
   "Architect 설계: {codex_result}
    Critic 우려: {gemini_result}
    이를 반영하여 계획을 수정하라. 수용/반박 근거 포함."
 
-Codex에게:
-  "Planner 계획: {claude_result}
-   Critic 우려: {gemini_result}
-   설계를 수정하라."
+> **MANDATORY: Codex/Gemini 교차 검토도 headless dispatch로 실행**
 
-Gemini에게:
-  "Planner 계획: {claude_result}
+Codex에게 + Gemini에게 — Bash (background, headless dispatch):
+  Bash("tfx multi --teammate-mode headless --auto-attach --dashboard \
+    --assign 'codex:Planner 계획: {claude_result}
+   Critic 우려: {gemini_result}
+   설계를 수정하라.:architect' \
+    --assign 'gemini:Planner 계획: {claude_result}
    Architect 설계: {codex_result}
-   우려 사항이 해소되었는지 판단하라. 미해소 항목 지적."
+   우려 사항이 해소되었는지 판단하라. 미해소 항목 지적.:critic' \
+    --timeout 600")
 ```
 
 ### Round 3: 합의 도출 (필요 시)

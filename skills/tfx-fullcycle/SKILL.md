@@ -58,19 +58,19 @@ Claude Opus (Planner, background):
    태스크 분해, 순서, 의존성, TDD 전략 포함.
    JSON: { tasks, order, dependencies, tdd_strategy, risks }"
 
-Codex (Architect, background):
-  codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
-  "시니어 엔지니어로서 기술적 설계를 작성하라:
+> **MANDATORY: Codex/Gemini 계획 라운드는 headless dispatch로 실행**
+
+CLI 워커 headless dispatch (Bash, background):
+  Bash("tfx multi --teammate-mode headless --auto-attach --dashboard \
+    --assign 'codex:시니어 엔지니어로서 기술적 설계를 작성하라:
    기능: {expanded_requirements}
    파일 구조, API 인터페이스, 데이터 모델 포함.
-   JSON: { design, file_changes, interfaces, test_plan }"
-
-Gemini (Critic, background):
-  gemini -y -p \
-  "QA 전문가로서 구현 계획의 리스크를 분석하라:
+   JSON: { design, file_changes, interfaces, test_plan }:architect' \
+    --assign 'gemini:QA 전문가로서 구현 계획의 리스크를 분석하라:
    기능: {expanded_requirements}
    엣지 케이스, 보안, 성능, 접근성 우려 포함.
-   JSON: { edge_cases, security_risks, performance, accessibility, test_cases }"
+   JSON: { edge_cases, security_risks, performance, accessibility, test_cases }:critic' \
+    --timeout 600")
 ```
 
 3개 결과를 tfx-consensus 프로토콜로 합의 도출:
@@ -115,19 +115,18 @@ Claude (기능 + 엣지케이스, background):
    엣지 케이스 테스트 시나리오 제안.
    JSON: { criteria_results, edge_case_findings, overall_pass }"
 
-Codex (보안 + 성능, background):
-  codex exec review --profile thorough \
-    --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
-  "보안/성능 관점에서 변경사항을 리뷰하라:
-   OWASP Top 10, 성능 병목, 에러 핸들링, 리소스 누수 확인.
-   JSON: { security_findings, performance_findings, overall_pass }"
+> **MANDATORY: Codex/Gemini QA 리뷰는 headless dispatch로 실행**
 
-Gemini (UX + 접근성, background):
-  gemini -y -p \
-  "UX/접근성 관점에서 변경사항을 리뷰하라:
+CLI 워커 headless dispatch (Bash, background):
+  Bash("tfx multi --teammate-mode headless --auto-attach --dashboard \
+    --assign 'codex:보안/성능 관점에서 변경사항을 리뷰하라:
+   OWASP Top 10, 성능 병목, 에러 핸들링, 리소스 누수 확인.
+   JSON: { security_findings, performance_findings, overall_pass }:verifier' \
+    --assign 'gemini:UX/접근성 관점에서 변경사항을 리뷰하라:
    UI 변경 있으면: 접근성, 반응형, 사용성.
    API 변경 있으면: DX, 문서화, 일관성.
-   JSON: { ux_findings, accessibility_findings, overall_pass }"
+   JSON: { ux_findings, accessibility_findings, overall_pass }:verifier' \
+    --timeout 600")
 ```
 
 ### Phase 5: Validation (Consensus >= 70)

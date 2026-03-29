@@ -99,13 +99,13 @@ Claude (Agent, background):
    각 전문가의 고유 관점에서 분석하세요.
    JSON: { experts: [{ name, position, reasoning, concerns, recommendation, confidence }] }"
 
-Codex (Bash, background):
-  codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
-    "당신은 {expert_3.name}과 {expert_4.name}입니다. {topic}에 대해 각 전문가 관점으로..."
+> **MANDATORY: Codex/Gemini 전문가 분석은 headless dispatch로 실행**
 
-Gemini (Bash, background):
-  gemini -y -p \
-    "당신은 {expert_5.name}과 {expert_6.name}입니다. {topic}에 대해 각 전문가 관점으로..."
+CLI 워커 headless dispatch (Bash, background):
+  Bash("tfx multi --teammate-mode headless --auto-attach --dashboard \
+    --assign 'codex:당신은 {expert_3.name}과 {expert_4.name}입니다. {topic}에 대해 각 전문가 관점으로...:analyst' \
+    --assign 'gemini:당신은 {expert_5.name}과 {expert_6.name}입니다. {topic}에 대해 각 전문가 관점으로...:analyst' \
+    --timeout 600")
 ```
 
 ### Step 3: 패널 토론 시뮬레이션

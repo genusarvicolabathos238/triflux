@@ -45,7 +45,7 @@ argument-hint: "<구현할 작업 설명>"
 ### Step 2: Codex 직접 구현
 
 ```bash
-codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
+bash ~/.claude/scripts/tfx-route.sh codex \
   "다음 작업을 구현하라:
    작업: {task}
    프로젝트 컨텍스트: {context}
@@ -54,7 +54,7 @@ codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
    1. 관련 파일을 읽고 구조를 파악하라
    2. 필요한 코드를 작성/수정하라
    3. 기존 테스트를 실행하여 회귀가 없는지 확인하라
-   4. 변경 사항을 요약하라"
+   4. 변경 사항을 요약하라" implement
 ```
 
 ### Step 3: Claude 검증

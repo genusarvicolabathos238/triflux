@@ -54,26 +54,25 @@ Claude Opus (기능 + 엣지케이스, background):
            edge_case_tests: [...],
            overall_verdict: 'pass'|'fail' }"
 
-Codex (보안 + 성능, background):
-  codex exec review --profile thorough \
-    --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
-  "보안/성능 전문가로서 검증하라.
+> **MANDATORY: Codex/Gemini 검증은 headless dispatch로 실행**
+
+Codex (보안 + 성능) + Gemini (UX + 접근성) — Bash (background, headless dispatch):
+  Bash("tfx multi --teammate-mode headless --auto-attach --dashboard \
+    --assign 'codex:보안/성능 전문가로서 검증하라.
    - OWASP Top 10 체크
    - O(n²) 이상 복잡도 탐지
    - 메모리 누수 패턴
    - 입력 검증 누락
    JSON: { findings: [{id, file, line, category, severity, description, fix}],
-           overall_verdict: 'pass'|'fail' }"
-
-Gemini (UX + 접근성, background):
-  gemini -y -p \
-  "UX/접근성 전문가로서 검증하라.
+           overall_verdict: 'pass'|'fail' }:verifier' \
+    --assign 'gemini:UX/접근성 전문가로서 검증하라.
    - API 응답 형식 일관성
    - 에러 메시지 사용자 친화성
    - WCAG 2.1 AA 준수 (UI 관련 시)
    - 문서와 실제 동작 일치 여부
    JSON: { findings: [{id, file, line, category, severity, description, suggestion}],
-           overall_verdict: 'pass'|'fail' }"
+           overall_verdict: 'pass'|'fail' }:verifier' \
+    --timeout 600")
 ```
 
 ### Step 3: Consensus Scoring
@@ -92,10 +91,12 @@ consensus_score = consensus_items / total_unique_items × 100
 
 ```
 합의된 Critical/High 항목에 대해:
-  codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
-  "다음 합의된 이슈를 수정하라:
+  > **MANDATORY: 수정 단계도 headless dispatch로 실행**
+  Bash("tfx multi --teammate-mode headless --auto-attach --dashboard \
+    --assign 'codex:다음 합의된 이슈를 수정하라:
    {consensus_findings}
-   수정 후 테스트를 재실행하여 확인하라."
+   수정 후 테스트를 재실행하여 확인하라.:fixer' \
+    --timeout 300")
 ```
 
 ### Step 5: 종합 보고서

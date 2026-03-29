@@ -30,21 +30,26 @@ git diff (staged + unstaged) 또는 지정 파일 수집
 
 ```
 Claude Opus (Agent, background):
+  Agent(subagent_type="oh-my-claudecode:code-reviewer", run_in_background=true)
   관점: 로직 결함, 아키텍처 위반, 설계 패턴
   "코드 리뷰어로서 로직/아키텍처 관점에서 분석하라.
    JSON: { findings: [{ id, file, line, severity, category, description, suggestion }] }"
 
-Codex (Bash, background):
-  관점: 보안 취약점, 성능 병목, 에러 핸들링
-  codex exec review --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
-  "보안/성능 전문가로서 분석하라. OWASP Top 10, O(n²) 패턴, 누락된 에러 핸들링.
-   JSON: { findings: [...] }"
+CLI 워커 headless dispatch (Codex + Gemini 동시, MANDATORY):
+  Bash("tfx multi --teammate-mode headless --auto-attach --dashboard \
+    --assign 'codex:{아래 Codex 프롬프트}:reviewer' \
+    --assign 'gemini:{아래 Gemini 프롬프트}:reviewer' \
+    --timeout 600")
 
-Gemini (Bash, background):
-  관점: 가독성, 문서화, 네이밍, DX
-  gemini -y -p \
-  "코드 품질 전문가로서 분석하라. 가독성, 네이밍 컨벤션, 주석 필요성, 타입 안전성.
-   JSON: { findings: [...] }"
+  Codex 프롬프트:
+    관점: 보안 취약점, 성능 병목, 에러 핸들링
+    "보안/성능 전문가로서 분석하라. OWASP Top 10, O(n²) 패턴, 누락된 에러 핸들링.
+     JSON: { findings: [...] }"
+
+  Gemini 프롬프트:
+    관점: 가독성, 문서화, 네이밍, DX
+    "코드 품질 전문가로서 분석하라. 가독성, 네이밍 컨벤션, 주석 필요성, 타입 안전성.
+     JSON: { findings: [...] }"
 ```
 
 ### Step 3: Consensus Scoring

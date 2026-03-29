@@ -735,7 +735,7 @@ function previewMcpRegistrationActions(mcpUrl) {
     type: "mcp-register",
     cli: "claude",
     target: "tfx-hub",
-    path: join(PKG_ROOT, ".mcp.json"),
+    path: join(process.cwd(), ".claude", "mcp.json"),
     url: mcpUrl,
     change: "check",
   });
@@ -2161,16 +2161,18 @@ function autoRegisterMcp(mcpUrl) {
     info("Gemini: 미설치 (건너뜀)");
   }
 
-  // Claude — 프로젝트 .mcp.json에 등록 (오케스트레이터용)
+  // Claude — .claude/mcp.json에 등록 (Claude Code 공식 경로)
   try {
-    const mcpJsonPath = join(PKG_ROOT, ".mcp.json");
+    const claudeDir = join(process.cwd(), ".claude");
+    if (!existsSync(claudeDir)) mkdirSync(claudeDir, { recursive: true });
+    const mcpJsonPath = join(claudeDir, "mcp.json");
     let mcpJson = {};
     if (existsSync(mcpJsonPath)) mcpJson = JSON.parse(readFileSync(mcpJsonPath, "utf8"));
     if (!mcpJson.mcpServers) mcpJson.mcpServers = {};
     if (!mcpJson.mcpServers["tfx-hub"]) {
       mcpJson.mcpServers["tfx-hub"] = { type: "url", url: mcpUrl };
       writeFileSync(mcpJsonPath, JSON.stringify(mcpJson, null, 2) + "\n");
-      ok("Claude: .mcp.json에 등록 완료");
+      ok("Claude: .claude/mcp.json에 등록 완료");
     } else {
       ok("Claude: 이미 등록됨");
     }

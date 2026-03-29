@@ -39,7 +39,7 @@ argument-hint: "[테스트 명령 또는 파일 경로]"
 ### Step 2: 테스트 실행 (Round 1)
 
 ```bash
-codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
+bash ~/.claude/scripts/tfx-route.sh codex \
   "다음 테스트를 실행하고 결과를 보고하라:
    명령: {test_command}
 
@@ -47,7 +47,7 @@ codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
    - 총 테스트 수
    - 통과/실패/스킵 수
    - 실패한 테스트 목록 (파일:테스트명:에러 메시지)
-   - 실패 원인 분석 (각 실패별)"
+   - 실패 원인 분석 (각 실패별)" implement
 ```
 
 ### Step 3: 실패 수정 + 재실행 루프
@@ -60,14 +60,14 @@ WHILE (failures > 0 AND retry < MAX_RETRIES):
   retry++
 
   Codex로 실패 수정:
-    codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
+    bash ~/.claude/scripts/tfx-route.sh codex \
     "다음 테스트 실패를 수정하라:
      실패 목록: {failures}
 
      규칙:
      - 테스트 코드가 아닌 구현 코드를 수정하라 (테스트가 정확한 경우)
      - 테스트 자체가 잘못된 경우만 테스트를 수정하라
-     - 수정 후 해당 테스트를 다시 실행하여 확인하라"
+     - 수정 후 해당 테스트를 다시 실행하여 확인하라" implement
 
   재실행하여 결과 확인
 

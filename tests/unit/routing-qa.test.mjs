@@ -231,9 +231,9 @@ describe("headless: buildHeadlessCommand", async () => {
     assert.ok(cmd.includes("/tmp/result.txt"));
   });
 
-  it("gemini → gemini -p ... --output-format text > result", () => {
+  it("gemini → gemini --prompt ... --output-format text > result", () => {
     const cmd = buildHeadlessCommand("gemini", "test prompt", "/tmp/result.txt");
-    assert.ok(cmd.includes("gemini -p"), `gemini -p 포함: ${cmd}`);
+    assert.ok(cmd.includes("gemini --prompt"), `gemini --prompt 포함: ${cmd}`);
     assert.ok(cmd.includes("--output-format text"));
     assert.ok(cmd.includes("> '/tmp/result.txt'"));
   });

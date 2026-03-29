@@ -88,10 +88,10 @@ AskUserQuestion:
 
 ```
 if primary_cli == "codex":
-  Bash("codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check '{prompt}'")
+  Bash("bash ~/.claude/scripts/tfx-route.sh codex '{prompt}' implement")
 
 elif primary_cli == "gemini":
-  Bash("gemini -y -p '{prompt}'")
+  Bash("bash ~/.claude/scripts/tfx-route.sh gemini '{prompt}' implement")
 
 elif primary_cli == "claude":
   if primary_model == "haiku":

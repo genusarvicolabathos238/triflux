@@ -90,19 +90,19 @@ Claude (Agent, background):
   - category: "research paper" 우선
   - highlights 추출, numResults: 5/쿼리
 
-Codex (Bash, background):
-  codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
-  "다음 서브쿼리를 Brave Search로 검색하고 결과를 종합하라:
+> **MANDATORY: Codex/Gemini 검색은 headless dispatch로 실행**
+
+Codex (Brave Search) + Gemini (Tavily) — Bash (background, headless dispatch):
+  Bash("tfx multi --teammate-mode headless --auto-attach --dashboard \
+    --assign 'codex:다음 서브쿼리를 Brave Search로 검색하고 결과를 종합하라:
    {sub_queries}
    관점: 실용/구현/산업 사례 중심
-   각 쿼리당 상위 5개 결과의 제목, URL, 핵심 내용을 추출하라."
-
-Gemini (Bash, background):
-  gemini -y -p \
-  "다음 서브쿼리를 Tavily로 검색하라:
+   각 쿼리당 상위 5개 결과의 제목, URL, 핵심 내용을 추출하라.:researcher' \
+    --assign 'gemini:다음 서브쿼리를 Tavily로 검색하라:
    {sub_queries}
    관점: 비용/운영/DX(개발자 경험) 중심
-   각 결과를 구조화하여 정리하라."
+   각 결과를 구조화하여 정리하라.:researcher' \
+    --timeout 600")
 ```
 
 ### Phase 2: 결과 수집 및 교차검증

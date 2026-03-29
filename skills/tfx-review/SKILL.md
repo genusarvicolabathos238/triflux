@@ -25,10 +25,10 @@ argument-hint: "[파일 경로 또는 변경 설명]"
 
 ### Step 2: Codex 리뷰 실행
 ```bash
-codex exec review --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
+bash ~/.claude/scripts/tfx-route.sh codex \
   "다음 코드 변경을 리뷰하라. 심각도별 분류(critical/high/medium/low).
    체크: 로직 결함, 보안 취약점, 성능 문제, SOLID 위반, 에러 핸들링.
-   변경사항: {diff_or_file_content}"
+   변경사항: {diff_or_file_content}" review
 ```
 
 ### Step 3: 결과 포맷

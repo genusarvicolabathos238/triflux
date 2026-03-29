@@ -60,16 +60,16 @@ Claude (Agent, background):
    최종 추천과 근거를 제시하세요.
    JSON 형식으로 출력하세요: { recommendation, reasoning, pros, cons, risks, confidence }"
 
-Codex (Bash, background):
-  codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
-    "당신은 시니어 백엔드 엔지니어입니다. {topic}에 대해 구현 관점에서 분석하세요.
-     {context} 기반으로 각 옵션의 기술적 트레이드오프를 평가하세요.
-     JSON: { recommendation, reasoning, pros, cons, risks, confidence }"
+> **MANDATORY: Codex/Gemini 독립 분석은 headless dispatch로 실행**
 
-Gemini (Bash, background):
-  gemini -y -p \
-    "당신은 DevOps/인프라 엔지니어이자 DX 전문가입니다. {topic}에 대해 운영+개발자경험 관점에서 분석하세요.
-     {context}. JSON: { recommendation, reasoning, pros, cons, risks, confidence }"
+CLI 워커 headless dispatch (Bash, background):
+  Bash("tfx multi --teammate-mode headless --auto-attach --dashboard \
+    --assign 'codex:당신은 시니어 백엔드 엔지니어입니다. {topic}에 대해 구현 관점에서 분석하세요.
+     {context} 기반으로 각 옵션의 기술적 트레이드오프를 평가하세요.
+     JSON: { recommendation, reasoning, pros, cons, risks, confidence }:analyst' \
+    --assign 'gemini:당신은 DevOps/인프라 엔지니어이자 DX 전문가입니다. {topic}에 대해 운영+개발자경험 관점에서 분석하세요.
+     {context}. JSON: { recommendation, reasoning, pros, cons, risks, confidence }:analyst' \
+    --timeout 600")
 ```
 
 ### Step 3: 결과 수집 및 교차검증

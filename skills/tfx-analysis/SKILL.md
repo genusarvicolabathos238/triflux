@@ -41,7 +41,7 @@ argument-hint: "<분석 대상 — 파일, 디렉토리, 또는 주제>"
 ### Step 2: Codex 분석 실행
 
 ```bash
-codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
+bash ~/.claude/scripts/tfx-route.sh codex \
   "시니어 소프트웨어 엔지니어로서 다음을 분석하라:
    대상: {target}
    유형: {analysis_type}
@@ -54,7 +54,7 @@ codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
    5. 기술 부채 — TODO/FIXME, deprecated API, 하드코딩
    6. 테스트 — 커버리지 추정, 테스트 부재 영역
 
-   구조화된 보고서로 출력하라."
+   구조화된 보고서로 출력하라." analyze
 ```
 
 ### Step 3: 결과 포맷

@@ -121,8 +121,12 @@ function readPromptFromStdin() {
 }
 
 function resolveDefaultMcpConfig(cwd) {
-  const candidate = resolve(cwd, '.mcp.json');
-  return existsSync(candidate) ? [candidate] : [];
+  const primary = resolve(cwd, '.claude', 'mcp.json');
+  if (existsSync(primary)) return [primary];
+  const legacy = resolve(cwd, '.mcp.json');
+  if (existsSync(legacy)) return [legacy];
+  process.stderr.write('[tfx-route-worker] warning: no MCP config found, hub unavailable\n');
+  return [];
 }
 
 const args = parseArgs(process.argv.slice(2));

@@ -20,10 +20,12 @@ argument-hint: "(내부 전용 — Deep 스킬이 자동 호출)"
 3개 CLI가 **동시에, 상호 결과를 보지 않고** 독립 분석한다. 이것이 핵심이다 — 한 CLI의 결과가 다른 CLI에 영향을 주면 편향이 발생한다.
 
 ```
-실행 방식:
-  ├─ Claude (Opus/Sonnet): Agent() 또는 /team worker로 실행
-  ├─ Codex: Bash("codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check '{prompt}'")
-  └─ Gemini: Bash("gemini -y -p '{prompt}'")
+실행 방식 (MANDATORY — headless dispatch):
+  ├─ Claude (Opus/Sonnet): Agent(subagent_type, run_in_background=true)
+  └─ CLI 워커 (Codex+Gemini): Bash("tfx multi --teammate-mode headless --auto-attach --dashboard \
+        --assign 'codex:{prompt}:analyst' \
+        --assign 'gemini:{prompt}:analyst' \
+        --timeout 600")
 
 각 CLI에게 동일한 프롬프트를 전달하되, 출력 형식을 JSON으로 강제:
   {
@@ -96,7 +98,7 @@ Deep 스킬에서 사용하는 방법:
 
 ```
 1. 프롬프트 준비 (주제 + 분석 관점 + 출력 형식)
-2. 3개 CLI 병렬 실행 (Bash background + Agent background)
+2. 3개 CLI 병렬 실행 (headless dispatch + Agent background)
 3. 결과 수집
 4. 위 Consensus Algorithm 적용
 5. consensus_score >= 70 → 확정
