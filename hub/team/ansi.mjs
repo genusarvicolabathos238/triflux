@@ -39,7 +39,7 @@ export const FG = {
   cyan:     `${ESC}[36m`,
   gray:     `${ESC}[90m`,
   // triflux 브랜드
-  codex:    `${ESC}[97m`,              // bright white
+  codex:    `${ESC}[38;2;16;163;127m`, // #10a37f codex green
   gemini:   `${ESC}[38;5;39m`,         // blue
   claude:   `${ESC}[38;2;232;112;64m`, // orange
   triflux:  `${ESC}[38;5;214m`,        // amber
@@ -185,7 +185,7 @@ export function clip(str, width) {
     acc += cw;
     i += char.length;
   }
-  return plain + " ".repeat(width - acc);
+  return str + " ".repeat(width - acc);
 }
 
 // ── Catppuccin Mocha 색상 상수 ──

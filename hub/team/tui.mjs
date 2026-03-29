@@ -363,16 +363,15 @@ function buildWorkerRail(name, st, opts = {}) {
     innerWidth,
   );
 
-  // status-specific border: running→blue, completed→green, failed→red, partial→yellow
+  // status-specific border: focused→mauve, selected→bright, non-selected→dimmed tint
   const statusBorderColor = (() => {
     if (focused) return MOCHA.thinking;
-    if (selected) {
-      if (status === "running" || status === "in_progress") return MOCHA.blue;
-      if (status === "ok" || status === "completed") return MOCHA.ok;
-      if (status === "failed") return MOCHA.fail;
-      if (status === "partial") return MOCHA.yellow;
-    }
-    return fadeBorderColor(status, st._prevStatus, st._statusChangedAt);
+    if (selected) return statusColor(status);
+    // Non-selected: status-tinted border (50% blend toward border gray)
+    const from = statusToRgb(status);
+    const to = MOCHA_RGB.border;
+    const c = lerpRgb(from, to, 0.5);
+    return `\x1b[38;2;${c.r};${c.g};${c.b}m`;
   })();
 
   if (compact) {
@@ -457,7 +456,7 @@ function buildFocusPane(name, st, opts = {}) {
   ];
 
   // 본문 스크롤 영역
-  const bodyAvail = Math.max(0, height - stickyLines.length - 2); // top+bot border
+  const bodyAvail = Math.max(0, height - stickyLines.length - 3); // top+bot border + scrollInfo
   const allBodyLines = wrapTextAll(detailText(st), innerWidth, rawMode);
 
   let startIdx;
