@@ -654,6 +654,16 @@ function getSetupSyncTargets() {
       dst: join(CLAUDE_DIR, "scripts", "hub", "workers", "factory.mjs"),
       label: "hub/workers/factory.mjs",
     },
+    {
+      src: join(PKG_ROOT, "scripts", "remote-spawn.mjs"),
+      dst: join(CLAUDE_DIR, "scripts", "remote-spawn.mjs"),
+      label: "remote-spawn.mjs",
+    },
+    {
+      src: join(PKG_ROOT, "hub", "team", "psmux.mjs"),
+      dst: join(CLAUDE_DIR, "hub", "team", "psmux.mjs"),
+      label: "hub/team/psmux.mjs",
+    },
   ];
 }
 
