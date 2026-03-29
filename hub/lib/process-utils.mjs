@@ -155,8 +155,8 @@ export function cleanupOrphanNodeProcesses() {
 
   try {
     const treeOutput = execSync(
-      `powershell -NoProfile -ExecutionPolicy Bypass -File "${TREE_SCRIPT_PATH}" -StartPid ${myPid}`,
-      { encoding: "utf8", timeout: 8000, stdio: ["pipe", "pipe", "pipe"] },
+      `powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "${TREE_SCRIPT_PATH}" -StartPid ${myPid}`,
+      { encoding: "utf8", timeout: 8000, stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
     );
     for (const line of treeOutput.split(/\r?\n/)) {
       const pid = Number.parseInt(line.trim(), 10);
@@ -168,8 +168,8 @@ export function cleanupOrphanNodeProcesses() {
   const procMap = new Map();
   try {
     const output = execSync(
-      `powershell -NoProfile -ExecutionPolicy Bypass -File "${SCAN_SCRIPT_PATH}"`,
-      { encoding: "utf8", timeout: 15000, stdio: ["pipe", "pipe", "pipe"] },
+      `powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "${SCAN_SCRIPT_PATH}"`,
+      { encoding: "utf8", timeout: 15000, stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
     );
 
     for (const line of output.split(/\r?\n/)) {
@@ -203,8 +203,8 @@ export function cleanupOrphanNodeProcesses() {
   let remaining = 0;
   try {
     const countOutput = execSync(
-      `powershell -NoProfile -Command "(Get-Process node -ErrorAction SilentlyContinue).Count"`,
-      { encoding: "utf8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] },
+      `powershell -NoProfile -WindowStyle Hidden -Command "(Get-Process node -ErrorAction SilentlyContinue).Count"`,
+      { encoding: "utf8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
     );
     remaining = Number.parseInt(countOutput.trim(), 10) || 0;
   } catch {}

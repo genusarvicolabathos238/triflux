@@ -1403,7 +1403,7 @@ async function cmdDoctor(options = {}) {
         // --fix 없이는 개수만 보고
         const { execSync: execSyncDoctor } = await import("node:child_process");
         const countStr = execSyncDoctor(
-          `powershell -NoProfile -Command "(Get-Process node -ErrorAction SilentlyContinue).Count"`,
+          `powershell -NoProfile -WindowStyle Hidden -Command "(Get-Process node -ErrorAction SilentlyContinue).Count"`,
           { encoding: "utf8", timeout: 5000 },
         ).trim();
         const count = Number.parseInt(countStr, 10) || 0;
@@ -1486,7 +1486,7 @@ async function cmdDoctor(options = {}) {
                 // Claude Code 프로세스에서 세션 ID 검색
                 if (process.platform === "win32") {
                   const psOut = execSync(
-                    `powershell -NoProfile -Command "$ErrorActionPreference='SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match '${safeToken}' } | Select-Object ProcessId | ConvertTo-Json -Compress"`,
+                    `powershell -NoProfile -WindowStyle Hidden -Command "$ErrorActionPreference='SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match '${safeToken}' } | Select-Object ProcessId | ConvertTo-Json -Compress"`,
                     { encoding: "utf8", timeout: 8000, stdio: ["ignore", "pipe", "ignore"], windowsHide: true },
                   ).trim();
                   if (psOut && psOut !== "null") {
@@ -1497,7 +1497,7 @@ async function cmdDoctor(options = {}) {
                 } else {
                   const psOut = execSync(
                     `ps -ax -o pid=,command= | grep -i '${safeToken}' | grep -v grep`,
-                    { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] },
+                    { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"], windowsHide: true },
                   ).trim();
                   hasActiveMember = psOut.length > 0;
                 }

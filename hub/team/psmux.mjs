@@ -514,8 +514,8 @@ function killOrphanPipeHelpers(sessionName) {
   const safeSession = sanitizePathPart(sessionName);
   try {
     const output = childProcess.execSync(
-      `powershell -NoProfile -Command "$ErrorActionPreference='SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'pipe-pane-capture' -and $_.CommandLine -match '${safeSession}' } | Select-Object -ExpandProperty ProcessId"`,
-      { encoding: "utf8", timeout: 8000, stdio: ["pipe", "pipe", "pipe"] },
+      `powershell -NoProfile -WindowStyle Hidden -Command "$ErrorActionPreference='SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'pipe-pane-capture' -and $_.CommandLine -match '${safeSession}' } | Select-Object -ExpandProperty ProcessId"`,
+      { encoding: "utf8", timeout: 8000, stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
     );
     const pids = output.split(/\r?\n/).map((l) => Number.parseInt(l.trim(), 10)).filter((p) => Number.isFinite(p) && p > 0);
     for (const pid of pids) {
@@ -549,8 +549,8 @@ function killOrphanMcpProcesses(sessionName) {
   try {
     // 세션 결과 디렉토리 패턴으로 MCP 서버 프로세스 식별
     const output = childProcess.execSync(
-      `powershell -NoProfile -Command "$ErrorActionPreference='SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match '${safeSession}' } | Select-Object -ExpandProperty ProcessId"`,
-      { encoding: "utf8", timeout: 8000, stdio: ["pipe", "pipe", "pipe"] },
+      `powershell -NoProfile -WindowStyle Hidden -Command "$ErrorActionPreference='SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match '${safeSession}' } | Select-Object -ExpandProperty ProcessId"`,
+      { encoding: "utf8", timeout: 8000, stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
     );
     const pids = output.split(/\r?\n/).map((l) => Number.parseInt(l.trim(), 10)).filter((p) => Number.isFinite(p) && p > 0 && p !== hubPid);
     for (const pid of pids) {
