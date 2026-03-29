@@ -228,7 +228,12 @@ function dedupeRole(role, name, cli) {
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   r = r.replace(new RegExp(esc(cli), "gi"), "").trim();
   r = r.replace(new RegExp(esc(name), "gi"), "").trim();
-  r = r.replace(/\(\s*\)/g, "").replace(/^\s*[•·\-]\s*/, "").trim();
+  // CLI indicator emojis 제거
+  r = r.replace(/[⚪⚫🔴🟠🟡🟢🔵🟣🟤⭕🔘]/g, "").trim();
+  // 빈 괄호 제거 + 중첩 괄호 정리
+  r = r.replace(/\(\s*\)/g, "").trim();
+  r = r.replace(/^\(([^()]+)\)$/, "$1").trim();
+  r = r.replace(/^\s*[•·\-]\s*/, "").trim();
   return r;
 }
 
@@ -813,7 +818,7 @@ export function createLogDashboard(opts = {}) {
     const railLines = [];
     for (const name of names) {
       const card = buildWorkerRail(name, workers.get(name), {
-        width: railWidth - 2, // box 테두리 감안
+        width: railWidth,
         selected: name === selectedWorker,
         focused: focus === "rail" && name === selectedWorker,
         rawMode,

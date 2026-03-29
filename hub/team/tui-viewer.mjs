@@ -388,9 +388,12 @@ function ingest() {
 }
 
 // ── tui.updateWorker 래퍼 — raw internal data 누출 방지 ──
-function pushToTui(paneName, cli, role, update) {
+function pushToTui(paneName, cli, paneTitle, update) {
   // _leadAction은 tui에 노출하지 않음 (내부용)
   const { _leadAction: _ignored, ...safeUpdate } = update;
+  // pane title에서 실제 역할만 추출: "⚪ codex (executor)" → "executor"
+  const roleMatch = paneTitle.match(/\(([^)]+)\)$/);
+  const role = roleMatch ? roleMatch[1] : "";
   tui.updateWorker(paneName, { cli, role, ...safeUpdate });
 }
 

@@ -461,9 +461,30 @@ describe("createLogDashboard", () => {
     });
     tui.render();
     const clean = stripAnsi(output);
-    // "codex (worker-1)" 중복이 제거되어 role 부분에 "codex" 와 "worker-1"이 괄호 안에 반복되지 않아야 함
     assert.equal(clean.includes("(codex (worker-1))"), false, "중복 role이 표시되면 안됨");
     assert.ok(clean.includes("worker-1"), "워커 이름은 표시되어야 함");
+    tui.close();
+  });
+
+  it("P0: CLI 아이콘 이모지가 role에서 제거된다", () => {
+    let output = "";
+    const fakeStream = { write: (s) => { output += s; }, columns: 160, isTTY: false };
+    const tui = createLogDashboard({ stream: fakeStream, refreshMs: 0, columns: 160 });
+    output = "";
+    // ⚪ codex → 이모지+CLI 모두 제거 → role 빈 문자열 → 괄호 미표시
+    tui.updateWorker("worker-1", { cli: "codex", role: "⚪ codex", status: "running" });
+    tui.render();
+    const clean1 = stripAnsi(output);
+    assert.equal(clean1.includes("(⚪)"), false, "이모지만 남은 괄호 표시 안됨");
+    assert.equal(clean1.includes("(⚪ codex)"), false, "중복 role+이모지 표시 안됨");
+
+    output = "";
+    // 🔵 gemini (writer) → 이모지+CLI 제거 → "writer"만 남음
+    tui.updateWorker("worker-2", { cli: "gemini", role: "🔵 gemini (writer)", status: "running" });
+    tui.render();
+    const clean2 = stripAnsi(output);
+    assert.equal(clean2.includes("(🔵"), false, "이모지가 괄호에 남으면 안됨");
+    assert.ok(clean2.includes("(writer)"), "유의미한 role은 유지되어야 함");
     tui.close();
   });
 
