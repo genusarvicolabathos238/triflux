@@ -1,6 +1,6 @@
 // hub/team/native-supervisor.mjs — tmux 없이 멀티 CLI를 직접 띄우는 네이티브 팀 런타임
 import { createServer } from "node:http";
-import { spawn } from "node:child_process";
+import { spawn, execSync as execSyncSupervisor } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, createWriteStream } from "node:fs";
 import { dirname, join } from "node:path";
 import { verifySlimWrapperRouteExecution } from "./native.mjs";
@@ -275,7 +275,13 @@ async function shutdown() {
   setTimeout(() => {
     for (const state of processMap.values()) {
       if (state.status === "running") {
-        try { state.child.kill("SIGKILL"); } catch {}
+        const pid = state.child?.pid;
+        if (process.platform === "win32" && Number.isInteger(pid) && pid > 0) {
+          // Windows: 프로세스 트리 전체 강제 종료 (손자 MCP 서버 포함)
+          try { execSyncSupervisor(`taskkill /T /F /PID ${pid}`, { stdio: "pipe", windowsHide: true, timeout: 5000 }); } catch {}
+        } else {
+          try { state.child.kill("SIGKILL"); } catch {}
+        }
       }
     }
     process.exit(0);

@@ -66,6 +66,8 @@ tfx setup
 /tfx-debate "Redis vs PostgreSQL LISTEN/NOTIFY for real-time events"
 
 # Persistence — 완료될 때까지 멈추지 않음
+/tfx-persist "implement full auth flow with tests"
+# 호환 별칭
 /tfx-ralph "implement full auth flow with tests"
 
 # Team — Multi-CLI 병렬 오케스트레이션
@@ -91,7 +93,7 @@ tfx setup
 - **Anti-Herding** — 1라운드는 상호 참조 없이 병렬 실행하여 편향 오염을 원천 차단
 - **Expert Panel** — `tfx-panel`을 통한 가상 전문가 시뮬레이션 (Fowler, Newman, Porter 등)
 - **94% 토큰 절감** — `tfx-index`가 58K 토큰 분량의 파일 읽기를 3KB 프로젝트 맵으로 대체
-- **Persistence Loop** — `tfx-ralph`(3자 검증)와 `tfx-sisyphus`(자동 라우팅)가 검증 완료까지 반복 실행
+- **Persistence Loop** — `tfx-persist`(정식 이름, 3자 검증), `/tfx-ralph`(호환 별칭), `tfx-sisyphus`(자동 라우팅)가 검증 완료까지 반복 실행
 - **Hub IPC** — Named Pipe 및 HTTP MCP 브리지를 활용한 초고속 상주형 Hub 서버
 - **psmux / Windows 네이티브** — `tmux`(WSL)와 `psmux`(Windows Terminal) 하이브리드 지원
 
@@ -184,7 +186,7 @@ Phase 3: Resolution (합의율 < 70%일 경우)
 
 | 스킬 | 유형 | 설명 | 토큰 |
 |------|------|------|------|
-| `tfx-ralph` | Deep | 완료될 때까지 3자 검증 기반 반복 실행 | 가변 |
+| `tfx-persist` | Deep | 완료될 때까지 3자 검증 기반 반복 실행 (`/tfx-ralph` 호환 별칭) | 가변 |
 | `tfx-sisyphus` | Light | 모델 에스컬레이션을 갖춘 자동 라우팅 실행 | 가변 |
 
 ### 메타 및 유틸리티
@@ -306,7 +308,7 @@ tfx setup
 /tfx-debate "Redis vs PostgreSQL LISTEN/NOTIFY for real-time events"
 
 # Persistence — 완료될 때까지 멈추지 않음
-/tfx-ralph "implement full auth flow with tests"
+/tfx-persist "implement full auth flow with tests"  # /tfx-ralph도 동작
 
 # Team — Multi-CLI 병렬 오케스트레이션
 /tfx-multi "refactor auth + update UI + add tests"

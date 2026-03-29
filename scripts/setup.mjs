@@ -53,6 +53,49 @@ const REQUIRED_CODEX_PROFILES = [
   },
 ];
 
+const SKILL_ALIASES = [
+  {
+    alias: "tfx-ralph",
+    source: "tfx-persist",
+  },
+];
+
+function buildAliasedSkillContent(srcContent, { alias, source }) {
+  return srcContent
+    .replace(/^name:\s*.+$/m, `name: ${alias}`)
+    .replaceAll(source, alias)
+    .replace(/^#\s+.+$/m, `# ${alias} — Compatibility Alias for ${source}`);
+}
+
+function syncAliasedSkillDir(srcDir, dstDir, { alias, source }) {
+  if (!existsSync(dstDir)) mkdirSync(dstDir, { recursive: true });
+
+  let count = 0;
+  for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
+    const srcPath = join(srcDir, entry.name);
+    const dstPath = join(dstDir, entry.name);
+
+    if (entry.isDirectory()) {
+      count += syncAliasedSkillDir(srcPath, dstPath, { alias, source });
+      continue;
+    }
+
+    if (!entry.name.endsWith(".md")) continue;
+
+    const rawContent = readFileSync(srcPath, "utf8");
+    const nextContent = entry.name === "SKILL.md"
+      ? buildAliasedSkillContent(rawContent, { alias, source })
+      : rawContent;
+
+    if (!existsSync(dstPath) || readFileSync(dstPath, "utf8") !== nextContent) {
+      writeFileSync(dstPath, nextContent, "utf8");
+      count++;
+    }
+  }
+
+  return count;
+}
+
 // ── 파일 동기화 ──
 
 const SYNC_MAP = [
@@ -282,7 +325,7 @@ function ensureCodexProfiles() {
   }
 }
 
-export { replaceProfileSection, hasProfileSection, detectDevMode, SYNC_MAP, BREADCRUMB_PATH, PLUGIN_ROOT, CLAUDE_DIR };
+export { replaceProfileSection, hasProfileSection, detectDevMode, SYNC_MAP, BREADCRUMB_PATH, PLUGIN_ROOT, CLAUDE_DIR, SKILL_ALIASES };
 
 async function main() {
 const isSync = process.argv.includes("--sync");
@@ -423,6 +466,13 @@ if (existsSync(skillsSrc)) {
     if (!existsSync(skillMd)) continue;
 
     synced += syncSkillDir(skillDir, join(skillsDst, name));
+  }
+
+  for (const { alias, source } of SKILL_ALIASES) {
+    const sourceDir = join(skillsSrc, source);
+    const sourceSkillMd = join(sourceDir, "SKILL.md");
+    if (!existsSync(sourceSkillMd)) continue;
+    synced += syncAliasedSkillDir(sourceDir, join(skillsDst, alias), { alias, source });
   }
 }
 

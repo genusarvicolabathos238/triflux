@@ -66,6 +66,8 @@ tfx setup
 /tfx-debate "Redis vs PostgreSQL LISTEN/NOTIFY for real-time events"
 
 # Persistence — don't stop until done
+/tfx-persist "implement full auth flow with tests"
+# Compatibility alias
 /tfx-ralph "implement full auth flow with tests"
 
 # Team — Multi-CLI parallel orchestration
@@ -91,7 +93,7 @@ tfx setup
 - **Anti-Herding** — Round 1 runs in parallel with zero cross-visibility to prevent bias contamination
 - **Expert Panel** — Virtual expert simulation (Fowler, Newman, Porter, etc.) via `tfx-panel`
 - **94% Token Reduction** — `tfx-index` creates a 3KB project map replacing 58K tokens of file reads
-- **Persistence Loops** — `tfx-ralph` (3-party verified) and `tfx-sisyphus` (auto-routing) run until verified complete
+- **Persistence Loops** — `tfx-persist` (canonical, 3-party verified), `/tfx-ralph` (compat alias), and `tfx-sisyphus` (auto-routing) run until verified complete
 - **Hub IPC** — Lightning-fast resident Hub server with Named Pipe & HTTP MCP bridge
 - **psmux / Windows Native** — Hybrid support for `tmux` (WSL) and `psmux` (Windows Terminal)
 
@@ -184,7 +186,7 @@ Phase 3: Resolution (if consensus < 70%)
 
 | Skill | Type | Description | Tokens |
 |-------|------|-------------|--------|
-| `tfx-ralph` | Deep | 3-party verified persistence loop until done | varies |
+| `tfx-persist` | Deep | 3-party verified persistence loop until done (`/tfx-ralph` compat alias) | varies |
 | `tfx-sisyphus` | Light | Auto-routing execution with model escalation | varies |
 
 ### Meta & Utility
@@ -306,7 +308,7 @@ tfx setup
 /tfx-debate "Redis vs PostgreSQL LISTEN/NOTIFY for real-time events"
 
 # Persistence — Don't stop until done
-/tfx-ralph "implement full auth flow with tests"
+/tfx-persist "implement full auth flow with tests"  # /tfx-ralph also works
 
 # Team — Multi-CLI parallel orchestration
 /tfx-multi "refactor auth + update UI + add tests"

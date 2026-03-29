@@ -5,6 +5,7 @@ import { extname, join, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { writeFileSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { execSync as execSyncHub } from 'node:child_process';
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -779,13 +780,20 @@ export async function startHub({ port = 27888, dbPath, host = '127.0.0.1', sessi
   }, 60000);
   sessionTimer.unref();
 
-  // 고아 node.exe 프로세스 주기적 정리 (5분마다)
-  // Agent 서브프로세스가 MCP 서버를 남기는 Windows 이슈 대응
+  // 고아 node.exe 프로세스 + stale spawn 세션 주기적 정리 (5분마다)
   const orphanCleanupTimer = setInterval(() => {
     try {
       const { killed } = cleanupOrphanNodeProcesses();
       if (killed > 0) {
         hubLog.info({ killed }, 'hub.orphan_cleanup');
+      }
+    } catch {}
+
+    // stale tfx-spawn-* psmux 세션 정리 (30분 이상 idle)
+    try {
+      const staleKilled = cleanupStaleSpawnSessions(hubLog);
+      if (staleKilled > 0) {
+        hubLog.info({ killed: staleKilled }, 'hub.stale_spawn_cleanup');
       }
     } catch {}
   }, 5 * 60 * 1000);
@@ -920,6 +928,56 @@ export function getHubInfo() {
   }
 }
 
+/**
+ * stale tfx-spawn-* psmux 세션을 감지하고 정리한다.
+ * 30분 이상 경과 + pane이 idle 쉘 프롬프트만 표시 → kill.
+ * @param {object} [log] logger (optional)
+ * @returns {number} killed session count
+ */
+function cleanupStaleSpawnSessions(log) {
+  const MAX_AGE_MS = 30 * 60 * 1000;
+  const IDLE_PROMPT_RE = /^(PS\s|[$%>#]\s*$|\w+@[\w.-]+[:\s]|╰─|╭─|[fb]wd-i-search:|client_loop:\s|Connection\s+(reset|closed))/;
+  const execOpts = { encoding: "utf8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"], windowsHide: true };
+
+  let killed = 0;
+  let raw;
+  try {
+    raw = execSyncHub("psmux list-sessions", execOpts);
+  } catch {
+    return 0; // psmux 없거나 실패
+  }
+
+  const now = Date.now();
+  for (const line of raw.split(/\r?\n/)) {
+    const match = line.match(/^(tfx-spawn-[^:]+):\s+\d+\s+windows?\s+\(created\s+(.+)\)/);
+    if (!match) continue;
+
+    const [, sessionName, createdStr] = match;
+    if (!/^[a-zA-Z0-9_-]+$/.test(sessionName)) continue; // shell injection 방지
+    const created = new Date(createdStr).getTime();
+    if (!Number.isFinite(created) || now - created < MAX_AGE_MS) continue;
+
+    // pane 내용 확인 — 마지막 3줄 중 idle 쉘 프롬프트가 있는지
+    try {
+      const pane = execSyncHub(`psmux capture-pane -t "${sessionName}:0.0" -p`, execOpts);
+      const tailLines = pane.split(/\r?\n/).filter((l) => l.trim()).slice(-3);
+      const hasIdleLine = tailLines.some((l) => IDLE_PROMPT_RE.test(l.trim()));
+      if (!hasIdleLine) continue; // 아직 활성 — 건드리지 않음
+    } catch {
+      continue; // pane 접근 실패 — 건드리지 않음
+    }
+
+    // stale + idle → 정리
+    try {
+      execSyncHub(`psmux kill-session -t "${sessionName}"`, execOpts);
+      killed++;
+      if (log) log.info({ session: sessionName, ageMin: Math.round((now - created) / 60000) }, "hub.stale_spawn_killed");
+    } catch {}
+  }
+
+  return killed;
+}
+
 const selfRun = process.argv[1]?.replace(/\\/g, '/').endsWith('hub/server.mjs');
 if (selfRun) {
   const port = parseInt(process.env.TFX_HUB_PORT || '27888', 10);
@@ -928,6 +986,8 @@ if (selfRun) {
   startHub({ port, dbPath }).then((info) => {
     const shutdown = async (signal) => {
       hubLog.info({ signal }, 'hub.stopping');
+      try { cleanupOrphanNodeProcesses(); } catch {}
+      try { cleanupStaleSpawnSessions(hubLog); } catch {}
       await info.stop();
       process.exit(0);
     };

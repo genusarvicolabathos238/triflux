@@ -72,7 +72,6 @@ function startHubDetached(port) {
       // hook timeout 시 프로세스 트리 킬에서 살아남음
       const child = spawn("cmd.exe", ["/c", "start", "/b", "", process.execPath, serverPath], {
         env,
-        detached: true,
         stdio: "ignore",
         windowsHide: true,
       });

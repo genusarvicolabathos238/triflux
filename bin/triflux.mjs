@@ -42,6 +42,49 @@ const REQUIRED_CODEX_PROFILES = [
   },
 ];
 
+const SKILL_ALIASES = [
+  {
+    alias: "tfx-ralph",
+    source: "tfx-persist",
+  },
+];
+
+function buildAliasedSkillContent(srcContent, { alias, source }) {
+  return srcContent
+    .replace(/^name:\s*.+$/m, `name: ${alias}`)
+    .replaceAll(source, alias)
+    .replace(/^#\s+.+$/m, `# ${alias} — Compatibility Alias for ${source}`);
+}
+
+function syncAliasedSkillDir(srcDir, dstDir, { alias, source }) {
+  if (!existsSync(dstDir)) mkdirSync(dstDir, { recursive: true });
+
+  let count = 0;
+  for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
+    const srcPath = join(srcDir, entry.name);
+    const dstPath = join(dstDir, entry.name);
+
+    if (entry.isDirectory()) {
+      count += syncAliasedSkillDir(srcPath, dstPath, { alias, source });
+      continue;
+    }
+
+    if (!entry.name.endsWith(".md")) continue;
+
+    const rawContent = readFileSync(srcPath, "utf8");
+    const nextContent = entry.name === "SKILL.md"
+      ? buildAliasedSkillContent(rawContent, { alias, source })
+      : rawContent;
+
+    if (!existsSync(dstPath) || readFileSync(dstPath, "utf8") !== nextContent) {
+      writeFileSync(dstPath, nextContent, "utf8");
+      count++;
+    }
+  }
+
+  return count;
+}
+
 // ── 색상 체계 (triflux brand: amber/orange accent) ──
 const CYAN = "\x1b[36m";
 const GREEN = "\x1b[32m";
@@ -678,6 +721,12 @@ function listSkillSyncActions() {
     if (!existsSync(src)) continue;
     actions.push(describeSyncAction(src, dst, `skill:${name}`));
   }
+  for (const { alias, source } of SKILL_ALIASES) {
+    const src = join(skillsSrc, source, "SKILL.md");
+    const dst = join(CLAUDE_DIR, "skills", alias, "SKILL.md");
+    if (!existsSync(src)) continue;
+    actions.push(describeSyncAction(src, dst, `skill-alias:${alias}`));
+  }
   return actions;
 }
 
@@ -805,6 +854,13 @@ function cmdSetup(options = {}) {
           skillCount++;
         }
       }
+    }
+    for (const { alias, source } of SKILL_ALIASES) {
+      const srcDir = join(skillsSrc, source);
+      const src = join(srcDir, "SKILL.md");
+      if (!existsSync(src)) continue;
+      skillTotal++;
+      skillCount += syncAliasedSkillDir(srcDir, join(skillsDst, alias), { alias, source });
     }
     if (skillCount > 0) {
       ok(`스킬: ${skillCount}/${skillTotal}개 업데이트됨`);
@@ -1765,6 +1821,8 @@ function cmdList(options = {}) {
   const installedSkills = join(CLAUDE_DIR, "skills");
   const packageSkills = [];
   const userSkills = [];
+  const aliasNames = new Set(SKILL_ALIASES.map(({ alias }) => alias));
+  const skillAliases = [];
 
   if (existsSync(pluginSkills)) {
     for (const name of readdirSync(pluginSkills).sort()) {
@@ -1775,10 +1833,15 @@ function cmdList(options = {}) {
     }
   }
 
+  for (const { alias, source } of SKILL_ALIASES) {
+    const dst = join(installedSkills, alias, "SKILL.md");
+    skillAliases.push({ alias, source, installed: existsSync(dst) });
+  }
+
   const pkgNames = new Set(existsSync(pluginSkills) ? readdirSync(pluginSkills) : []);
   if (existsSync(installedSkills)) {
     for (const name of readdirSync(installedSkills).sort()) {
-      if (pkgNames.has(name)) continue;
+      if (pkgNames.has(name) || aliasNames.has(name)) continue;
       const skill = join(installedSkills, name, "SKILL.md");
       if (!existsSync(skill)) continue;
       userSkills.push(name);
@@ -1788,6 +1851,7 @@ function cmdList(options = {}) {
   if (json) {
     printJson({
       package_skills: packageSkills,
+      skill_aliases: skillAliases,
       user_skills: userSkills,
       install_path: installedSkills,
     });
@@ -1811,6 +1875,15 @@ function cmdList(options = {}) {
     console.log(`    ${AMBER}◆${RESET} ${name}`);
   }
   if (userSkills.length === 0) console.log(`    ${GRAY}없음${RESET}`);
+
+  if (skillAliases.length > 0) {
+    section("호환 alias");
+    for (const entry of skillAliases) {
+      const icon = entry.installed ? `${GREEN_BRIGHT}↳${RESET}` : `${RED_BRIGHT}↳${RESET}`;
+      const status = entry.installed ? "" : ` ${GRAY}(미설치)${RESET}`;
+      console.log(`    ${icon} ${BOLD}${entry.alias}${RESET} ${GRAY}→ ${entry.source}${RESET}${status}`);
+    }
+  }
 
   console.log(`\n  ${LINE}`);
   console.log(`  ${GRAY}${installedSkills}${RESET}\n`);

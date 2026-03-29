@@ -19,6 +19,7 @@ import {
   capturePsmuxPane,
   createPsmuxSession,
   hasPsmux,
+  killPsmuxSession,
   listPsmuxSessions,
   psmuxExec,
   psmuxSessionExists,
@@ -661,35 +662,40 @@ function spawnLocal(args, claudePath, prompt) {
   }
 
   createPsmuxSession(sessionName, { layout: "1xN", paneCount: 1 });
-  sendKeysToPane(paneId, `cd '${escapePwshSingleQuoted(dir)}'`);
-  sleepMs(300);
+  try {
+    sendKeysToPane(paneId, `cd '${escapePwshSingleQuoted(dir)}'`);
+    sleepMs(300);
 
-  if (prompt && tmpFile) {
-    // pwsh -File 패턴: 인라인 쿼팅 문제 회피 (피드백: -Command 금지)
-    // 1단계: 프롬프트를 Get-Content -Raw → claude -p (one-shot), 세션 ID 추출
-    // 2단계: --resume으로 인터랙티브 세션 이어붙이기
-    const tmpFileNorm = normalizeCommandPath(tmpFile);
-    const flags = getPermissionFlag().map((f) => `'${escapePwshSingleQuoted(f)}'`).join(", ");
-    const scriptContent = [
-      `$ErrorActionPreference = 'SilentlyContinue'`,
-      `$t = '${escapePwshSingleQuoted(tmpFileNorm)}'`,
-      `$c = '${escapePwshSingleQuoted(claudePathNorm)}'`,
-      `$f = @(${flags})`,
-      `$raw = Get-Content -Raw $t`,
-      `Remove-Item -ErrorAction SilentlyContinue $t`,
-      `Remove-Item -ErrorAction SilentlyContinue $MyInvocation.MyCommand.Definition`,
-      `& $c @f $raw`,
-    ].join("\n");
-    const scriptFile = join(tmpdir(), `tfx-spawn-${randomUUID().slice(0, 8)}.ps1`);
-    writeFileSync(scriptFile, scriptContent, { encoding: "utf8" });
-    sendKeysToPane(paneId, `pwsh -NoProfile -NoExit -File '${escapePwshSingleQuoted(normalizeCommandPath(scriptFile))}'`);
-  } else {
-    const command = `& '${escapePwshSingleQuoted(claudePathNorm)}'${permissionFlags ? ` ${permissionFlags}` : ""}`;
-    sendKeysToPane(paneId, command);
+    if (prompt && tmpFile) {
+      // pwsh -File 패턴: 인라인 쿼팅 문제 회피 (피드백: -Command 금지)
+      // 1단계: 프롬프트를 Get-Content -Raw → claude -p (one-shot), 세션 ID 추출
+      // 2단계: --resume으로 인터랙티브 세션 이어붙이기
+      const tmpFileNorm = normalizeCommandPath(tmpFile);
+      const flags = getPermissionFlag().map((f) => `'${escapePwshSingleQuoted(f)}'`).join(", ");
+      const scriptContent = [
+        `$ErrorActionPreference = 'SilentlyContinue'`,
+        `$t = '${escapePwshSingleQuoted(tmpFileNorm)}'`,
+        `$c = '${escapePwshSingleQuoted(claudePathNorm)}'`,
+        `$f = @(${flags})`,
+        `$raw = Get-Content -Raw $t`,
+        `Remove-Item -ErrorAction SilentlyContinue $t`,
+        `Remove-Item -ErrorAction SilentlyContinue $MyInvocation.MyCommand.Definition`,
+        `& $c @f $raw`,
+      ].join("\n");
+      const scriptFile = join(tmpdir(), `tfx-spawn-${randomUUID().slice(0, 8)}.ps1`);
+      writeFileSync(scriptFile, scriptContent, { encoding: "utf8" });
+      sendKeysToPane(paneId, `pwsh -NoProfile -NoExit -File '${escapePwshSingleQuoted(normalizeCommandPath(scriptFile))}'`);
+    } else {
+      const command = `& '${escapePwshSingleQuoted(claudePathNorm)}'${permissionFlags ? ` ${permissionFlags}` : ""}`;
+      sendKeysToPane(paneId, command);
+    }
+
+    openAttachTab(sessionName, "Claude@local");
+    console.log(sessionName);
+  } catch (err) {
+    try { killPsmuxSession(sessionName); } catch {}
+    throw err;
   }
-
-  openAttachTab(sessionName, "Claude@local");
-  console.log(sessionName);
 }
 
 async function spawnRemote(args, prompt) {
@@ -715,26 +721,31 @@ async function spawnRemote(args, prompt) {
   const permissionFlags = getPermissionFlag().join(" ");
 
   createPsmuxSession(sessionName, { layout: "1xN", paneCount: 1 });
-  sendKeysToPane(paneId, `ssh -t ${host}`);
-  await waitForRemotePrompt(sessionName, paneId);
+  try {
+    sendKeysToPane(paneId, `ssh -t ${host}`);
+    await waitForRemotePrompt(sessionName, paneId);
 
-  if (env.shell === "pwsh") {
-    const claudeCommand = `& "${escapePwshDoubleQuoted(env.claudePath)}"${permissionFlags ? ` ${permissionFlags}` : ""}`;
-    sendKeysToPane(paneId, `cd '${escapePwshSingleQuoted(resolvedDir)}'`);
-    sendKeysToPane(paneId, claudeCommand);
-  } else {
-    const claudeCommand = `${shellQuote(env.claudePath)}${permissionFlags ? ` ${permissionFlags}` : ""}`;
-    sendKeysToPane(paneId, `cd ${shellQuote(resolvedDir)}`);
-    sendKeysToPane(paneId, claudeCommand);
+    if (env.shell === "pwsh") {
+      const claudeCommand = `& "${escapePwshDoubleQuoted(env.claudePath)}"${permissionFlags ? ` ${permissionFlags}` : ""}`;
+      sendKeysToPane(paneId, `cd '${escapePwshSingleQuoted(resolvedDir)}'`);
+      sendKeysToPane(paneId, claudeCommand);
+    } else {
+      const claudeCommand = `${shellQuote(env.claudePath)}${permissionFlags ? ` ${permissionFlags}` : ""}`;
+      sendKeysToPane(paneId, `cd ${shellQuote(resolvedDir)}`);
+      sendKeysToPane(paneId, claudeCommand);
+    }
+
+    if (prompt) {
+      sleepMs(2000);
+      sendKeysToPane(paneId, prompt);
+    }
+
+    openAttachTab(sessionName, `Claude@${host}`);
+    console.log(sessionName);
+  } catch (err) {
+    try { killPsmuxSession(sessionName); } catch {}
+    throw err;
   }
-
-  if (prompt) {
-    sleepMs(2000);
-    sendKeysToPane(paneId, prompt);
-  }
-
-  openAttachTab(sessionName, `Claude@${host}`);
-  console.log(sessionName);
 }
 
 function sendPromptToSession(sessionName, prompt) {
