@@ -6,9 +6,7 @@ import { dirname } from "node:path";
 import { createHash } from "node:crypto";
 import {
   PERCENT_CELL_WIDTH, TIME_CELL_INNER_WIDTH, SV_CELL_WIDTH,
-  FIVE_HOUR_MS, SEVEN_DAY_MS,
 } from "./constants.mjs";
-import { dim } from "./colors.mjs";
 
 export async function readStdinJson() {
   if (process.stdin.isTTY) return {};
@@ -58,16 +56,23 @@ export function stripAnsi(text) {
   return String(text).replace(/\x1b\[[0-9;]*m/g, "");
 }
 
-export function padAnsiRight(text, width) {
-  const len = stripAnsi(text).length;
+function getVisibleLength(text) {
+  return stripAnsi(text).length;
+}
+
+function padAnsi(text, width, align = "right") {
+  const len = getVisibleLength(text);
   if (len >= width) return text;
-  return text + " ".repeat(width - len);
+  const padding = " ".repeat(width - len);
+  return align === "left" ? padding + text : text + padding;
+}
+
+export function padAnsiRight(text, width) {
+  return padAnsi(text, width, "right");
 }
 
 export function padAnsiLeft(text, width) {
-  const len = stripAnsi(text).length;
-  if (len >= width) return text;
-  return " ".repeat(width - len) + text;
+  return padAnsi(text, width, "left");
 }
 
 export function fitText(text, width) {
@@ -164,13 +169,29 @@ export function advanceToNextCycle(epochMs, cycleMs) {
   return epochMs + Math.ceil(elapsed / cycleMs) * cycleMs;
 }
 
+function parseResetDate(isoOrUnix) {
+  if (!isoOrUnix) return null;
+  const date = typeof isoOrUnix === "string"
+    ? new Date(isoOrUnix)
+    : new Date(isoOrUnix * 1000);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getResetTargetMs(isoOrUnix, cycleMs = 0) {
+  const date = parseResetDate(isoOrUnix);
+  if (!date) return null;
+  return advanceToNextCycle(date.getTime(), cycleMs);
+}
+
+function getRemainingResetMs(isoOrUnix, cycleMs = 0) {
+  const targetMs = getResetTargetMs(isoOrUnix, cycleMs);
+  if (targetMs == null) return null;
+  return targetMs - Date.now();
+}
+
 export function formatResetRemaining(isoOrUnix, cycleMs = 0) {
-  if (!isoOrUnix) return "";
-  const d = typeof isoOrUnix === "string" ? new Date(isoOrUnix) : new Date(isoOrUnix * 1000);
-  if (isNaN(d.getTime())) return "";
-  const targetMs = advanceToNextCycle(d.getTime(), cycleMs);
-  const diffMs = targetMs - Date.now();
-  if (diffMs <= 0) return "";
+  const diffMs = getRemainingResetMs(isoOrUnix, cycleMs);
+  if (diffMs == null || diffMs <= 0) return "";
   const totalMinutes = Math.floor(diffMs / 60000);
   const totalHours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
@@ -178,18 +199,13 @@ export function formatResetRemaining(isoOrUnix, cycleMs = 0) {
 }
 
 export function isResetPast(isoOrUnix) {
-  if (!isoOrUnix) return false;
-  const d = typeof isoOrUnix === "string" ? new Date(isoOrUnix) : new Date(isoOrUnix * 1000);
-  return !isNaN(d.getTime()) && d.getTime() <= Date.now();
+  const date = parseResetDate(isoOrUnix);
+  return date != null && date.getTime() <= Date.now();
 }
 
 export function formatResetRemainingDayHour(isoOrUnix, cycleMs = 0) {
-  if (!isoOrUnix) return "";
-  const d = typeof isoOrUnix === "string" ? new Date(isoOrUnix) : new Date(isoOrUnix * 1000);
-  if (isNaN(d.getTime())) return "";
-  const targetMs = advanceToNextCycle(d.getTime(), cycleMs);
-  const diffMs = targetMs - Date.now();
-  if (diffMs <= 0) return "";
+  const diffMs = getRemainingResetMs(isoOrUnix, cycleMs);
+  if (diffMs == null || diffMs <= 0) return "";
   const totalMinutes = Math.floor(diffMs / 60000);
   const days = Math.floor(totalMinutes / (60 * 24));
   const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
