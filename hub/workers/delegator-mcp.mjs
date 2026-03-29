@@ -80,7 +80,7 @@ const CODEX_PROFILE_BY_AGENT = Object.freeze({
   'scientist-deep': 'gpt54_high',
   'document-specialist': 'codex53_high',
   verifier: 'codex53_high',
-  designer: 'codex53_high',  // Gemini primary, codex fallback용
+  designer: 'gpt54_xhigh',  // Gemini primary, codex fallback — UI/UX는 5.4 에이전틱
   writer: 'codex53_high',    // Gemini primary, codex fallback용
   spark: 'spark53_low',
 });

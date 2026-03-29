@@ -813,7 +813,7 @@ apply_cli_mode() {
         CLI_TYPE="codex"; CLI_CMD="codex"
         case "$AGENT_TYPE" in
           designer)
-            CLI_ARGS="exec --profile codex53_high ${codex_base}"; CLI_EFFORT="codex53_high"; DEFAULT_TIMEOUT=600 ;;
+            CLI_ARGS="exec --profile gpt54_xhigh ${codex_base}"; CLI_EFFORT="gpt54_xhigh"; DEFAULT_TIMEOUT=600 ;;
           writer)
             CLI_ARGS="exec --profile spark53_low ${codex_base}"; CLI_EFFORT="spark53_low"; DEFAULT_TIMEOUT=180 ;;
         esac
