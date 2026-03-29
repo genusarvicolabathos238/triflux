@@ -17,6 +17,9 @@ docs/*
 !docs/demo.tape
 !docs/demo-light.tape
 
+# 리서치 (대외비 — 클론 레포, 분석 보고서, 설계문서)
+research/
+
 # 내부 스킬 (OMC 전용)
 skills/auto-verify/
 skills/manage-skills/

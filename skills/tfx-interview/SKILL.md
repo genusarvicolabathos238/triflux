@@ -1,0 +1,210 @@
+---
+name: tfx-interview
+description: Light 소크라테스식 요구사항 탐색. 수학적 모호성 점수로 요구사항을 정량 평가하고, 모호성 < 20%가 될 때까지 질문을 반복하여 명확한 실행 계획을 도출한다.
+triggers:
+  - interview
+  - 인터뷰
+  - 요구사항 탐색
+  - tfx-interview
+  - 모호성 분석
+argument-hint: "<구현할 주제 또는 요구사항>"
+---
+
+# tfx-interview — Quantified Socratic Requirements Exploration
+
+> OMC deep-interview + ouroboros 오마주. 모호성을 숫자로 측정하고 20% 미만까지 질문한다.
+> "측정할 수 없으면 개선할 수 없다."
+
+## 용도
+
+- 구현 전 요구사항 명확화
+- 모호한 요청을 정량적으로 분석하여 실행 가능한 수준으로 구체화
+- 빠진 제약 조건, 성공 기준, 경계 조건을 체계적으로 발견
+- 과잉 구현/과소 구현 방지
+
+## 핵심: 모호성 점수 (Ambiguity Score)
+
+요구사항의 모호성을 수학적으로 측정한다:
+
+```
+ambiguity = 1 - (goal × 0.40 + constraints × 0.30 + criteria × 0.30)
+
+각 요소 (0.0 ~ 1.0):
+  goal       — 목표 명확도. "무엇을 달성하려는가?"가 명확한가?
+  constraints — 제약 조건 명확도. 범위, 기술 스택, 시간, 호환성 등
+  criteria   — 성공 기준 명확도. "어떻게 되면 완료인가?"
+
+예시:
+  입력: "인증 기능 추가해"
+  goal = 0.5 (인증이 무슨 인증? OAuth? JWT? 세션?)
+  constraints = 0.2 (기술 스택? 기존 시스템 연동?)
+  criteria = 0.1 (테스트? 성능? 보안 수준?)
+  ambiguity = 1 - (0.5×0.40 + 0.2×0.30 + 0.1×0.30) = 1 - 0.29 = 0.71 (71%)
+
+목표: ambiguity < 0.20 (20% 미만)이 될 때까지 질문 반복.
+```
+
+## 워크플로우
+
+### Step 1: 초기 모호성 평가
+
+사용자 입력을 분석하여 초기 ambiguity score를 계산한다:
+
+```
+입력 분석:
+  1. goal, constraints, criteria 각 요소의 현재 명확도 평가
+  2. ambiguity score 계산
+  3. 가장 불명확한 요소 식별 → 해당 단계부터 질문 시작
+
+출력:
+  "📊 현재 모호성: 71%
+   - 목표: 50% 명확 (어떤 인증 방식?)
+   - 제약: 20% 명확 (기술 스택 미정)
+   - 기준: 10% 명확 (완료 조건 없음)
+   → Stage 1: Clarify부터 시작합니다."
+```
+
+### Step 2: 5단계 인터뷰 (모호성 < 20%까지)
+
+각 단계에서 AskUserQuestion으로 질문하고, 응답 후 ambiguity score를 재계산한다.
+
+#### Stage 1: Clarify (명확화) — goal 개선
+
+```
+질문 방향:
+  - "정확히 무엇을 달성하려는가?"
+  - "이 작업의 범위는 어디까지인가?"
+  - "완료 후 어떤 상태가 되어야 하는가?"
+
+응답 후: goal 점수 재평가 → ambiguity 재계산
+```
+
+#### Stage 2: Decompose (분해) — constraints 개선
+
+```
+질문 방향:
+  - "이것을 어떤 하위 문제로 나눌 수 있는가?"
+  - "기술적 제약 조건은? (스택, 호환성, 성능)"
+  - "의존하는 외부 시스템이나 API는?"
+
+응답 후: constraints 점수 재평가 → ambiguity 재계산
+```
+
+#### Stage 3: Challenge (반론) — 숨은 제약 발견
+
+```
+질문 방향:
+  - "이 접근의 약점은?"
+  - "실패할 수 있는 시나리오는?"
+  - "6개월 후 유지보수 관점에서 문제될 부분은?"
+
+응답 후: constraints + criteria 재평가 → ambiguity 재계산
+```
+
+#### Stage 4: Alternatives (대안) — criteria 정밀화
+
+```
+질문 방향:
+  - "다른 방법은 없는가?"
+  - "시간이 절반이라면 어떤 방식을 택하겠는가?"
+  - "각 대안의 trade-off는?"
+
+응답 후: criteria 점수 재평가 → ambiguity 재계산
+```
+
+#### Stage 5: Synthesize (종합) — 최종 확인
+
+```
+질문 방향:
+  - "지금까지의 논의를 종합하면 최적 경로는?"
+  - "첫 번째로 실행할 단계는?"
+  - "이 결정에 대한 확신도는? (1-10)"
+
+응답 후: 전체 재평가 → 최종 ambiguity score
+```
+
+### Step 3: 조기 종료 판단
+
+매 질문 후 ambiguity를 재계산하고, < 20%이면 남은 단계를 건너뛰고 종합 단계로 이동한다:
+
+```
+질문 후 재계산:
+  if ambiguity < 0.20:
+    → "📊 모호성 {score}% — 충분히 명확합니다. 종합 단계로 이동합니다."
+    → Step 4로 직행
+  elif ambiguity < 0.40:
+    → "📊 모호성 {score}% — 거의 명확합니다. 핵심 질문 1-2개만 더."
+  else:
+    → 다음 단계 진행
+```
+
+### Step 4: 산출물 생성
+
+인터뷰 결과를 구조화된 문서로 저장한다:
+
+```markdown
+# Interview: {topic}
+Date: {date} | Final Ambiguity: {score}%
+
+## Ambiguity Breakdown
+| 요소 | 초기 | 최종 | 개선 |
+|------|------|------|------|
+| Goal | {init}% | {final}% | +{delta}% |
+| Constraints | {init}% | {final}% | +{delta}% |
+| Criteria | {init}% | {final}% | +{delta}% |
+
+## Goal
+{1문장 목표}
+
+## Constraints
+{제약 조건 목록}
+
+## Success Criteria
+{성공 기준 목록}
+
+## Risks & Challenges
+{식별된 위험}
+
+## Alternatives Considered
+| 대안 | 장점 | 단점 | 채택 |
+|------|------|------|------|
+| ... | ... | ... | Y/N |
+
+## Decision
+{최종 결정 + 근거}
+
+## Action Plan
+1. {단계 1} → 검증: {check}
+2. {단계 2} → 검증: {check}
+3. ...
+```
+
+저장 위치: `.omc/plans/interview-{timestamp}.md`
+
+## 동작 규칙
+
+1. 각 단계에서 반드시 사용자 응답을 수집한 후 다음으로 이동한다.
+2. 매 응답 후 ambiguity score를 재계산하여 진행률을 표시한다.
+3. ambiguity < 20%이면 남은 단계를 건너뛰어도 된다.
+4. 5단계를 모두 거쳐도 ambiguity >= 20%이면 추가 질문 라운드를 진행한다 (최대 2회).
+5. 인터뷰 시작 시 코드베이스를 탐색하여 관련 컨텍스트를 확보한다.
+6. 이전 단계 답변을 다음 단계 질문에 반영한다 (대화형 연결).
+
+## 토큰 예산
+
+| 단계 | 토큰 |
+|------|------|
+| 초기 평가 | ~1K |
+| 5단계 인터뷰 (질문+분석) | ~10K |
+| 산출물 생성 | ~2K |
+| 코드베이스 탐색 | ~2K |
+| **총합** | **~15K** |
+
+## 사용 예
+
+```
+/tfx-interview "인증 시스템 리팩터링"
+/tfx-interview "실시간 알림 기능 추가"
+/요구사항 분석 "데이터 파이프라인 설계"
+/인터뷰 "레거시 API를 REST에서 GraphQL로 마이그레이션"
+```

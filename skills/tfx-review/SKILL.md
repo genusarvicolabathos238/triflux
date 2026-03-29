@@ -1,0 +1,51 @@
+---
+name: tfx-review
+description: 경량 코드 리뷰. Codex 단일 리뷰로 빠른 피드백.
+triggers:
+  - review
+  - 리뷰
+  - 코드 리뷰
+  - code review
+argument-hint: "[파일 경로 또는 변경 설명]"
+---
+
+# tfx-review — Light Code Review
+
+> Codex 단일 리뷰로 빠른 피드백. 토큰 최소화.
+
+## 워크플로우
+
+### Step 1: 리뷰 대상 식별
+```
+우선순위:
+  1. 사용자가 파일 경로 지정 → 해당 파일
+  2. git diff (staged + unstaged) → 변경된 파일
+  3. 최근 커밋 → git diff HEAD~1
+```
+
+### Step 2: Codex 리뷰 실행
+```bash
+codex exec review --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
+  "다음 코드 변경을 리뷰하라. 심각도별 분류(critical/high/medium/low).
+   체크: 로직 결함, 보안 취약점, 성능 문제, SOLID 위반, 에러 핸들링.
+   변경사항: {diff_or_file_content}"
+```
+
+### Step 3: 결과 포맷
+```markdown
+## Code Review: {target}
+
+### Critical (즉시 수정)
+- [C1] {파일:라인} — {설명}
+
+### High (수정 권장)
+- [H1] {파일:라인} — {설명}
+
+### Medium (개선 제안)
+- [M1] {파일:라인} — {설명}
+
+### Summary
+{전체 코드 품질 평가 1-2줄}
+```
+
+## 토큰: ~8K

@@ -1,0 +1,198 @@
+---
+name: tfx-deslop
+description: Deep AI 슬롭 제거. 변경 파일 → 3자 독립 슬롭 감지(불필요 추상화, 중복, 과잉 에러 핸들링) → 2+ 합의 항목만 제거 → 회귀 테스트. OMC deslop 영감.
+triggers:
+  - deslop
+  - 슬롭 제거
+  - anti-slop
+  - 정리
+  - slop
+argument-hint: "[파일 경로 또는 git diff 범위]"
+---
+
+# tfx-deslop — Tri-Verified AI Slop Remover
+
+> OMC ai-slop-cleaner 오마주. 핵심 차별점: 단일 판단이 아닌 **3자 독립 감지 + 합의** 기반 제거.
+> "AI가 만든 슬롭은 AI 3명이 합의해야 슬롭이다."
+
+## 용도
+
+- AI 생성 코드에서 불필요한 추상화, 중복, 과잉 패턴 제거
+- 코드 리뷰 후 슬롭 정리
+- 리팩터링 후 AI가 추가한 불필요한 코드 청소
+- PR 머지 전 코드 품질 최종 점검
+
+## 슬롭 카테고리
+
+| 카테고리 | 설명 | 예시 |
+|----------|------|------|
+| 불필요 추상화 | 단일 용도인데 인터페이스/팩토리/전략 패턴 적용 | `UserFactory` for 1 user type |
+| 중복 코드 | 같은 로직의 반복 | 동일 validation을 3곳에 복붙 |
+| 과잉 에러 핸들링 | 발생 불가능한 에러를 처리 | `catch (e) { /* impossible */ }` |
+| 과잉 주석 | 코드가 이미 명확한데 주석 | `// increment i by 1` `i++` |
+| 과잉 타입 | 불필요하게 복잡한 타입 정의 | 5단계 중첩 제네릭 |
+| 사용되지 않는 코드 | import 했지만 사용 안 함 | dead imports, unused variables |
+| 과잉 로깅 | 불필요한 console.log/debug | `console.log("here")` |
+
+## 워크플로우
+
+### Step 0: 슬롭 제거 범위 선택
+
+인자 없이 호출된 경우, AskUserQuestion으로 대상 범위를 선택받는다:
+
+```
+AskUserQuestion:
+  "슬롭 제거 범위를 선택하세요:"
+  1. 최근 변경 파일만 (git diff)
+  2. 전체 프로젝트
+  3. 특정 디렉토리 지정
+```
+
+- 1번 선택 → `git diff HEAD`로 최근 변경 파일 대상
+- 2번 선택 → 프로젝트 전체 소스 파일 대상 (대규모 주의 경고 표시)
+- 3번 선택 → 추가 AskUserQuestion으로 대상 디렉토리 경로 입력받음
+
+파일 경로나 git diff 범위가 인자로 이미 제공된 경우 이 단계를 건너뛴다.
+
+### Step 1: 대상 파일 수집
+
+```
+입력에 따라 대상 결정:
+
+1. 파일 경로 지정 → 해당 파일만
+2. git diff 범위 지정 → diff에 포함된 파일
+3. 입력 없음 → git diff HEAD로 최근 변경 파일
+4. "all" → 프로젝트 전체 소스 파일 (주의: 대규모)
+
+대상 파일 목록:
+  Bash("git diff --name-only HEAD~1") 또는 지정된 범위
+  → 소스 파일만 필터 (.ts, .js, .mjs, .tsx, .py 등)
+  → node_modules, dist, build 제외
+```
+
+### Step 2: 3자 독립 슬롭 감지 (Anti-Herding)
+
+3개 CLI가 **동시에, 상호 결과 비공개로** 각 파일의 슬롭을 감지한다:
+
+```
+공통 프롬프트 (각 CLI에 동일하게):
+  "다음 파일에서 AI 슬롭을 감지하세요.
+   슬롭 정의: 불필요 추상화, 중복, 과잉 에러핸들링, 과잉 주석, 과잉 타입,
+              미사용 코드, 과잉 로깅.
+
+   파일: {file_content}
+
+   각 발견에 대해:
+   { id, category, line_start, line_end, description, severity, suggested_fix }
+   severity: critical(기능에 영향) | high(가독성 심각) | medium(개선) | low(취향)
+
+   슬롭이 아닌 것은 보고하지 마세요. 과탐(false positive)보다 미탐이 낫습니다."
+
+실행:
+  Claude (Agent, background): 코드 품질 관점
+  Codex (Bash, background):   구현 효율 관점
+  Gemini (Bash, background):  가독성/DX 관점
+```
+
+### Step 3: 합의 필터링
+
+tfx-consensus 프로토콜로 교차검증한다:
+
+```
+for each finding in ALL results:
+  agreement = count(CLIs that found same or similar slop at same location)
+
+  if agreement >= 2:
+    → "CONFIRMED SLOP" (확정 — 제거 대상)
+  elif agreement == 1:
+    → "UNCONFIRMED" (미확정 — 제거하지 않음)
+
+원칙: 2+ 합의된 항목만 제거한다.
+       1개 CLI만 지적한 항목은 무시한다 (과탐 방지).
+```
+
+### Step 4: 슬롭 제거
+
+확정된 슬롭만 제거한다:
+
+```
+제거 순서 (안전 → 위험):
+  1. 과잉 주석 제거 (가장 안전)
+  2. 미사용 코드/import 제거
+  3. 과잉 로깅 제거
+  4. 과잉 에러핸들링 간소화
+  5. 중복 코드 통합
+  6. 불필요 추상화 제거 (가장 위험 — 인터페이스 변경 가능)
+
+각 제거 후:
+  - 변경 내용을 기록
+  - 제거 이유를 주석으로 남기지 않음 (그것 자체가 슬롭)
+```
+
+### Step 5: 회귀 테스트
+
+```
+제거 후 안전성 검증:
+
+1. 기존 테스트 실행
+   Bash("npm test" 또는 프로젝트 테스트 명령)
+
+2. 테스트 실패 시:
+   → 해당 제거를 롤백
+   → 롤백된 항목을 "위험 — 수동 검토 필요"로 표시
+
+3. 테스트 통과 시:
+   → 제거 확정
+```
+
+### Step 6: 보고서
+
+```markdown
+## Deslop 보고서
+
+### 요약
+| 항목 | 수 |
+|------|-----|
+| 대상 파일 | {count} |
+| 감지 (전체) | {total_findings} |
+| 합의 확정 | {confirmed} |
+| 미확정 (무시) | {unconfirmed} |
+| 제거 완료 | {removed} |
+| 롤백 (테스트 실패) | {rolled_back} |
+
+### 제거된 슬롭
+| # | 파일 | 라인 | 카테고리 | 합의 | 설명 |
+|---|------|------|----------|------|------|
+| 1 | auth.ts | 42-48 | 과잉 주석 | 3/3 | 자명한 코드에 장문 주석 |
+| 2 | utils.ts | 15-20 | 미사용 import | 2/3 | lodash 미사용 |
+
+### 미확정 (수동 검토 권장)
+| # | 파일 | 라인 | 카테고리 | 지적 CLI | 설명 |
+|---|------|------|----------|---------|------|
+| 1 | api.ts | 80-95 | 불필요 추상화 | Codex만 | Factory 패턴 필요성 논쟁 |
+
+### 테스트 결과
+통과: {pass}/{total} | 실패: {fail} | 롤백: {rollback}
+```
+
+## 토큰 예산
+
+| 단계 | 토큰 |
+|------|------|
+| Step 1 (파일 수집) | ~0.5K |
+| Step 2 (3x 독립 감지) | ~6K |
+| Step 3 (합의 필터링) | ~1K |
+| Step 4 (제거) | ~1.5K |
+| Step 5 (회귀 테스트) | ~0.5K |
+| Step 6 (보고서) | ~0.5K |
+| **총합** | **~10K** |
+
+## 사용 예
+
+```
+/tfx-deslop
+/tfx-deslop src/auth/middleware.ts
+/tfx-deslop HEAD~5..HEAD
+/정리 src/
+/anti-slop "과잉 에러 핸들링 제거"
+```

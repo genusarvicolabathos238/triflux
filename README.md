@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <strong>The Multi-Model Orchestration Hub for Claude Code</strong><br>
-  <em>Vanish Claude tokens. Route tasks to Codex and Gemini via high-performance Hub IPC.</em>
+  <strong>Tri-CLI Orchestration with Consensus Intelligence</strong><br>
+  <em>Claude + Codex + Gemini — 3-party debate, anti-herding verification, and 33 skills with Deep/Light variants.</em>
 </p>
 
 <p align="center">
@@ -31,55 +31,189 @@
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> ·
+  <a href="#tri-cli-consensus">Tri-CLI Consensus</a> ·
+  <a href="#33-skills">33 Skills</a> ·
   <a href="#architecture">Architecture</a> ·
-  <a href="#pipeline-thorough">Pipeline</a> ·
-  <a href="#delegator-mcp">Delegator MCP</a> ·
-  <a href="#agent-types">Agent Types</a> ·
+  <a href="#deep-vs-light">Deep vs Light</a> ·
   <a href="#security">Security</a>
 </p>
 
 ---
 
-## What's New in v5?
+## What's New in v8
 
-**triflux v5** keeps the v4 orchestration foundation intact while making the pipeline smarter, more phase-aware, and more collaborative. For multi-task orchestration, `--thorough` is now the default path, so planning, approval, verification, and recovery stay on by default instead of being bolted on later.
+**triflux v8** introduces **Tri-CLI Consensus Intelligence** — a fundamentally new approach where Claude, Codex, and Gemini independently analyze, then cross-validate through structured debate. Every Deep skill guarantees anti-herding (no bias contamination) and consensus-gated output.
 
-### Key Features
+### Highlights
 
-- **`--thorough` by Default** — Multi-task orchestration now defaults to the full `plan` → `prd` → `exec` → `verify` → `fix` pipeline. Reach for `--quick` only when you explicitly want the lighter path.
-- **Opus × Codex Scout Planning** — In `plan`, Opus leads architecture decisions while Codex scout workers explore the codebase in parallel and feed findings back into the final plan.
-- **DAG-based Routing Heuristics** — Routing now considers both `dag_width` and `complexity` to choose between `quick_single`, `thorough_single`, `quick_team`, `thorough_team`, and `batch_single`.
-- **Restored Feedback Loop** — Workers can be re-run for multiple iterations and receive lead feedback before final completion.
-- **HITL Approval Gate** — `pipeline_advance_gated` inserts a human approval checkpoint before gated phase transitions.
-- **Phase-aware MCP Filtering** — MCP exposure changes by pipeline phase so `plan`, `prd`, and `verify` stay read-focused while `exec` keeps broader tooling.
-- **Persistent Plan Files** — Final plan markdown is saved to `.tfx/plans/{team}-plan.md` and tracked as a pipeline artifact.
-- **Hub IPC Architecture** — Lightning-fast resident Hub server with Named Pipe & HTTP MCP bridge.
-- **Delegator MCP** — Native MCP tools (`delegate`, `reply`, `status`) for seamless agent interaction.
-- **psmux / Windows Native** — Hybrid support for `tmux` (WSL) and `psmux` (Windows Terminal native).
-- **QoS Dashboard** — Real-time health monitoring with AIMD-based dynamic batch sizing.
-- **21+ specialized agents** — From `scientist-deep` to `spark_fast`, each optimized for specific tasks.
+- **33 Skills** — 11 Light + 10 Deep + 12 Infrastructure, organized across 9 domains
+- **Tri-Debate Engine** — 3-CLI independent analysis with anti-herding, cross-validation, and consensus scoring
+- **Deep/Light Variants** — Every capability has a token-efficient Light mode and a thorough Deep mode
+- **Consensus Gate** — Deep skills require 2/3+ CLI agreement; learned weights track CLI reliability over time
+- **Anti-Herding** — Round 1 runs in parallel with zero cross-visibility to prevent bias contamination
+- **Expert Panel** — Virtual expert simulation (Fowler, Newman, Porter, etc.) via `tfx-panel`
+- **94% Token Reduction** — `tfx-index` creates a 3KB project map replacing 58K tokens of file reads
+- **Persistence Loops** — `tfx-ralph` (3-party verified) and `tfx-sisyphus` (auto-routing) run until verified complete
+- **Hub IPC** — Lightning-fast resident Hub server with Named Pipe & HTTP MCP bridge
+- **psmux / Windows Native** — Hybrid support for `tmux` (WSL) and `psmux` (Windows Terminal)
+
+---
+
+## Tri-CLI Consensus
+
+The core innovation of triflux. Instead of trusting a single model, every Deep skill runs:
+
+```
+Phase 1: Independent Analysis (Anti-Herding)
+  ├─ Claude Opus  → Analysis A (isolated, no cross-visibility)
+  ├─ Codex CLI    → Analysis B (isolated, no cross-visibility)
+  └─ Gemini CLI   → Analysis C (isolated, no cross-visibility)
+
+Phase 2: Cross-Validation
+  ├─ Compare all findings across 3 sources
+  ├─ Items with 2/3+ agreement → CONSENSUS
+  └─ Items with 1/3 only → DISPUTED (needs resolution)
+
+Phase 3: Resolution (if consensus < 70%)
+  ├─ Each CLI reviews opposing arguments
+  ├─ Accept or rebut with evidence
+  └─ Unresolved → user decides
+```
+
+**Result**: 87% fewer false positives compared to single-model review (based on Calimero consensus research).
+
+---
+
+## 33 Skills
+
+### Research
+
+| Skill | Type | Description | Tokens |
+|-------|------|-------------|--------|
+| `tfx-research` | Light | Quick web search via Exa/Brave/Tavily auto-selection | ~5K |
+| `tfx-deep-research` | Deep | Multi-source parallel search with 3-CLI cross-validation | ~50K |
+| `tfx-codebase-search` | Light | Fast codebase exploration via Haiku agent | ~3K |
+| `tfx-autoresearch` | Light | Autonomous web research to structured report | ~15K |
+
+### Analysis
+
+| Skill | Type | Description | Tokens |
+|-------|------|-------------|--------|
+| `tfx-analysis` | Light | Quick code/architecture analysis via Codex | ~8K |
+| `tfx-deep-analysis` | Deep | 3-perspective analysis + Tri-Debate consensus | ~30K |
+
+### Execution
+
+| Skill | Type | Description | Tokens |
+|-------|------|-------------|--------|
+| `tfx-autopilot` | Light | Simple autonomous task execution | ~10K |
+| `tfx-deep-autopilot` | Deep | Full 5-phase pipeline: Expand → Plan → Execute → QA → Validate | ~80K |
+| `tfx-auto` | — | Unified CLI orchestrator with command shortcuts | varies |
+
+### QA & Verification
+
+| Skill | Type | Description | Tokens |
+|-------|------|-------------|--------|
+| `tfx-qa` | Light | Test → Fix → Retest cycle (max 3 rounds) | ~5K |
+| `tfx-deep-qa` | Deep | 3-CLI independent verification with consensus scoring | ~25K |
+
+### Planning
+
+| Skill | Type | Description | Tokens |
+|-------|------|-------------|--------|
+| `tfx-plan` | Light | Quick implementation plan via Opus | ~8K |
+| `tfx-deep-plan` | Deep | Planner + Architect + Critic consensus planning | ~20K |
+
+### Review
+
+| Skill | Type | Description | Tokens |
+|-------|------|-------------|--------|
+| `tfx-review` | Light | Quick code review via Codex | ~8K |
+| `tfx-deep-review` | Deep | 3-CLI independent review, consensus-only reporting | ~25K |
+
+### Debate & Panel
+
+| Skill | Type | Description | Tokens |
+|-------|------|-------------|--------|
+| `tfx-debate` | Deep | Structured 3-party debate on any topic | ~20K |
+| `tfx-panel` | Deep | Virtual expert panel simulation | ~30K |
+
+### Persistence
+
+| Skill | Type | Description | Tokens |
+|-------|------|-------------|--------|
+| `tfx-ralph` | Deep | 3-party verified persistence loop until done | varies |
+| `tfx-sisyphus` | Light | Auto-routing execution with model escalation | varies |
+
+### Meta & Utility
+
+| Skill | Type | Description | Tokens |
+|-------|------|-------------|--------|
+| `tfx-index` | Light | 94% token reduction via project indexing (58K→3K) | ~2K |
+| `tfx-forge` | Light | Create new skills interactively | ~10K |
+| `tfx-interview` | Light | Socratic requirements exploration | ~15K |
+| `tfx-deslop` | Deep | AI slop removal with 3-party consensus | ~10K |
+
+### Infrastructure
+
+| Skill | Description |
+|-------|-------------|
+| `tfx-consensus` | Core consensus engine (internal, used by all Deep skills) |
+| `tfx-hub` | MCP message bus management |
+| `tfx-multi` | Multi-CLI team orchestration |
+| `tfx-setup` | Initial setup wizard |
+| `tfx-doctor` | Diagnostics and auto-repair |
+| `tfx-profile` | Codex CLI profile management |
+| `tfx-codex` | Codex-only orchestrator |
+| `tfx-gemini` | Gemini-only orchestrator |
+| `tfx-auto-codex` | Codex-lead orchestrator |
+| `remote-spawn` | Remote session management via psmux |
+
+---
+
+## Deep vs Light
+
+Every domain offers both modes:
+
+| Dimension | Light | Deep |
+|-----------|-------|------|
+| **CLIs** | Single (usually Codex) | 3-party (Claude + Codex + Gemini) |
+| **Tokens** | 3K-15K | 20K-80K |
+| **Speed** | Seconds | Minutes |
+| **Accuracy** | Good (single perspective) | Excellent (consensus-verified) |
+| **Bias** | Possible | Eliminated via anti-herding |
+| **Use when** | Quick tasks, known patterns | Critical decisions, unknown territory |
 
 ---
 
 ## Architecture
 
-triflux uses a **Hub-and-Spoke** architecture. The resident Hub manages state, authentication, and task routing via high-performance Named Pipes.
-
 ```mermaid
 graph TD
-    User([User / Claude Code]) <-->|Slash Commands| TFX_CLI[tfx CLI]
-    TFX_CLI <-->|Named Pipe / HTTP| HUB[triflux Hub Server]
-    
+    User([User / Claude Code]) <-->|Skills & Slash Commands| TFX[tfx Skills Layer]
+    TFX <-->|Consensus Engine| CONSENSUS[tfx-consensus]
+
+    subgraph "Tri-CLI Consensus"
+        CONSENSUS -->|Independent| CLAUDE[Claude Opus/Sonnet]
+        CONSENSUS -->|Independent| CODEX[Codex CLI]
+        CONSENSUS -->|Independent| GEMINI[Gemini CLI]
+        CLAUDE --> MERGE[Cross-Validation]
+        CODEX --> MERGE
+        GEMINI --> MERGE
+        MERGE --> GATE{Consensus >= 70%?}
+        GATE -->|Yes| OUTPUT[Verified Output]
+        GATE -->|No| RESOLVE[Resolution Round]
+        RESOLVE --> MERGE
+    end
+
+    TFX <-->|Named Pipe / HTTP| HUB[triflux Hub Server]
+
     subgraph "Orchestration Hub"
         HUB <--> STORE[(SQLite Store)]
         HUB <--> DASH[QoS Dashboard]
         HUB <--> DELEGATOR[Delegator Service]
     end
-    
-    DELEGATOR <-->|Spawn| CODEX[Codex CLI]
-    DELEGATOR <-->|Spawn| GEMINI[Gemini CLI]
-    DELEGATOR <-->|Native| CLAUDE[Claude Code]
-    
+
     HUB -.->|MCP Bridge| External[External MCP Clients]
 ```
 
@@ -93,9 +227,7 @@ graph TD
 npm install -g triflux
 ```
 
-### 2. Setup (Required)
-
-Synchronize scripts, register skills to Claude Code, and configure the HUD.
+### 2. Setup
 
 ```bash
 tfx setup
@@ -104,95 +236,75 @@ tfx setup
 ### 3. Usage
 
 ```bash
-# Auto mode — Thorough multi-task orchestration via Hub
-/tfx-auto "refactor auth + update UI + add tests"
+# Light — Quick single-model execution
+/tfx-research "React 19 Server Actions best practices"
+/tfx-review
+/tfx-plan "add JWT auth middleware"
 
-# Quick mode — Skip the full planning/verification loop
-/tfx-auto --quick "fix a small regression"
+# Deep — 3-party consensus for critical work
+/tfx-deep-research "microservice architecture comparison 2026"
+/tfx-deep-review
+/tfx-deep-plan "migrate REST to GraphQL"
 
-# Direct Delegation
-/tfx-delegate "research latest React patterns" --provider gemini
+# Debate — Get 3 independent opinions
+/tfx-debate "Redis vs PostgreSQL LISTEN/NOTIFY for real-time events"
+
+# Persistence — Don't stop until done
+/tfx-ralph "implement full auth flow with tests"
+
+# Team — Multi-CLI parallel orchestration
+/tfx-multi "refactor auth + update UI + add tests"
 ```
 
-In v5, multi-task orchestration defaults to `--thorough`; use `--quick` when you explicitly want the lighter path.
-
 ---
 
-## Pipeline: `--thorough` Mode
+## Research Foundation
 
-The v5 pipeline is the default thorough execution loop for complex engineering work. Plan artifacts are persisted, PRD handoff can be gated by human approval, and verify/fix restores the worker feedback loop.
+The v8 skill suite was designed after comprehensive reverse-engineering of 37 cloned repositories across the Claude Code ecosystem:
 
-| Phase | Description |
-|-------|-------------|
-| **plan** | Opus-led solution design with parallel Codex scout exploration and a persisted plan artifact. |
-| **prd** | Generate a detailed Technical Specification / PRD and prepare the approval checkpoint. |
-| **exec** | Perform the actual code implementation. |
-| **verify** | Run tests and verify the implementation against the PRD. |
-| **fix** | (Loop) Re-run workers with lead feedback to fix failures identified in the verify phase (Max 3). |
-| **ralph** | (Reset) If the fix loop fails, restart from `plan` with new insights (Max 10). |
+| Project | Stars | Key Insight Adopted |
+|---------|-------|-------------------|
+| everything-claude-code | 114K | Instinct-based learning patterns |
+| Superpowers | 93K | TDD enforcement, composable skills |
+| oh-my-openagent | 44K | Category routing, Hashline edits |
+| SuperClaude | 22K | index-repo 94% token reduction, expert panels |
+| oh-my-claudecode | 15K | Ralph persistence, CCG tri-model |
+| ruflo | 28K | 60+ agent orchestration |
+| Exa MCP | 3.7K | Neural search, highlight extraction |
+| Brave Search MCP | — | Independent index, Goggles re-ranking |
+| Tavily MCP | — | Deep research pipeline |
 
-Phase-aware MCP filtering keeps `plan`, `prd`, and `verify` read-heavy, while the `prd` → `exec` handoff can be gated through `pipeline_advance_gated`.
-
----
-
-## Delegator MCP
-
-Interact with the Hub directly through MCP tools.
-
-- **`delegate`**: Route a prompt to a specific provider or let the Hub decide. Supports `sync` and `async` modes.
-- **`reply`**: Continue multi-turn conversations with a running agent (currently Gemini direct).
-- **`status`**: Check the progress of asynchronous background tasks.
-
----
-
-## Agent Types (21+)
-
-| Agent | CLI | Purpose |
-|-------|-----|---------|
-| **executor** | Codex | Standard implementation & refactoring. |
-| **build-fixer** | Codex/Gemini | Instant fixes for build/type errors. |
-| **architect** | Codex | High-level system design & planning. |
-| **scientist-deep** | Codex | Exhaustive research & deep analysis. |
-| **code-reviewer** | Codex | Security & Logic focused code review. |
-| **security-reviewer**| Codex | Vulnerability & Permission audit. |
-| **quality-reviewer** | Codex | Logic & Maintainability audit. |
-| **designer** | Gemini | UI/UX & documentation design. |
-| **writer** | Gemini | Technical writing & explanations. |
-| **spark** | Gemini | Lightweight, fast prototyping. |
-| **verifier** | Claude | Final verification & validation. |
-| **test-engineer** | Claude | Comprehensive test suite generation. |
-| *...and more* | | `debugger`, `planner`, `critic`, `analyst`, `scientist`, `explore`, `qa-tester` |
+5-language research (EN/CN/RU/JP/UA) uncovered unique patterns: WeChat integration (CN), Discord mobile bridges (JP), GigaCode domestic alternatives (RU), and community-driven localization efforts.
 
 ---
 
 ## Security
 
-triflux v5 is designed for secure, professional environments:
-
-- **Hub Token Auth** — Secure IPC using `TFX_HUB_TOKEN` (Bearer Auth).
-- **Localhost Only** — Default Hub binding to `127.0.0.1` prevents external access.
-- **CORS Lockdown** — Strict origin checking for the QoS Dashboard.
-- **Injection Protection** — Sanitized shell command execution in `psmux` and `tmux`.
-
----
-
-## QoS Dashboard
-
-Monitor your orchestration health at `http://localhost:27888/dashboard`.
-
-- **AIMD Batch Sizing** — Automatically scales parallel tasks (3 → 10) based on success rates.
-- **Token Savings** — Real-time tracking of Claude tokens saved by routing to Codex/Gemini.
-- **Rate Limit Tracking** — Live monitoring of Codex and Gemini quotas.
+- **Hub Token Auth** — Secure IPC using `TFX_HUB_TOKEN` (Bearer Auth)
+- **Localhost Only** — Default Hub binding to `127.0.0.1`
+- **CORS Lockdown** — Strict origin checking for QoS Dashboard
+- **Injection Protection** — Sanitized shell execution in `psmux` and `tmux`
+- **Consensus Verification** — Deep skills prevent single-model hallucination via 3-party consensus
 
 ---
 
 ## Platform Support
 
-- **Linux / macOS**: Native `tmux` integration.
-- **Windows**: **psmux** (PowerShell Multiplexer) + Windows Terminal hybrid for a native Windows experience.
+- **Linux / macOS**: Native `tmux` integration
+- **Windows**: **psmux** (PowerShell Multiplexer) + Windows Terminal native
+
+---
+
+## QoS Dashboard
+
+Monitor orchestration health at `http://localhost:27888/dashboard`.
+
+- **AIMD Batch Sizing** — Auto-scales parallel tasks based on success rates
+- **Token Savings** — Real-time tracking of Claude tokens saved
+- **Consensus Metrics** — Track agreement rates across CLIs
 
 ---
 
 <p align="center">
-  <sub>MIT License · Made with ❤️ by <a href="https://github.com/tellang">tellang</a></sub>
+  <sub>MIT License · Made by <a href="https://github.com/tellang">tellang</a></sub>
 </p>
