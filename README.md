@@ -61,6 +61,10 @@
 
 ## Tri-CLI Consensus
 
+<p align="center">
+  <img src="docs/assets/consensus-flow.svg" alt="Tri-CLI Consensus Flow" width="680">
+</p>
+
 The core innovation of triflux. Instead of trusting a single model, every Deep skill runs:
 
 ```
@@ -175,6 +179,10 @@ Phase 3: Resolution (if consensus < 70%)
 
 Every domain offers both modes:
 
+<p align="center">
+  <img src="docs/assets/deep-vs-light.svg" alt="Deep vs Light comparison" width="680">
+</p>
+
 | Dimension | Light | Deep |
 |-----------|-------|------|
 | **CLIs** | Single (usually Codex) | 3-party (Claude + Codex + Gemini) |
@@ -187,6 +195,13 @@ Every domain offers both modes:
 ---
 
 ## Architecture
+
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="triflux architecture" width="680">
+</p>
+
+<details>
+<summary>Interactive diagram (GitHub only)</summary>
 
 ```mermaid
 graph TD
@@ -216,6 +231,8 @@ graph TD
 
     HUB -.->|MCP Bridge| External[External MCP Clients]
 ```
+
+</details>
 
 ---
 

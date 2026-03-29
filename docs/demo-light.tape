@@ -1,69 +1,30 @@
-# triflux Demo — Light Theme
-# VHS: https://github.com/charmbracelet/vhs
-# 실행: vhs docs/demo-light.tape
-
 Output docs/assets/demo-light.gif
-
-Set Theme "Catppuccin Latte"
-Set FontFamily "JetBrains Mono"
+Set Shell pwsh
+Set FontFamily "CaskaydiaCove Nerd Font"
 Set FontSize 14
-Set Width 900
-Set Height 500
+Set Width 1200
+Set Height 650
+Set Theme "Catppuccin Latte"
 Set Padding 20
+Set Framerate 24
 Set TypingSpeed 40ms
 
-# 타이틀
-Type "# triflux — CLI-first multi-model orchestrator"
+# Brand
+Type "node bin/triflux.mjs --version"
 Enter
-Sleep 1s
+Sleep 1.5s
 
-# 설치 확인
-Type "tfx doctor"
+# All skills
+Type "node bin/triflux.mjs list"
 Enter
-Sleep 3s
+Sleep 4s
 
-# Auto mode 데모
-Type "# Auto mode — AI가 분류 + 분해 + 병렬 실행"
+# Flagship: multi-CLI team
+Type "node bin/triflux.mjs multi --help"
 Enter
-Sleep 500ms
-Type@80ms 'claude "/tfx-auto refactor auth module + improve login UI + add tests"'
-Enter
-Sleep 2s
+Sleep 4s
 
-# 트리아지 시뮬레이션
-Type "# Phase 2: Triage"
-Enter
-Type "# auth refactor → codex (executor)"
-Enter
-Type "# login UI     → gemini (designer)"
-Enter
-Type "# tests        → claude (test-engineer)"
-Enter
-Sleep 2s
-
-# 병렬 실행 시뮬레이션
-Type "# Phase 3: Parallel Execution"
-Enter
-Type "# [codex] executor: src/auth/ ████████████ done (45s)"
-Enter
-Type "# [gemini] designer: src/components/ ████████████ done (30s)"
-Enter
-Type "# [claude] test-engineer: tests/ ████████████ done (25s)"
-Enter
-Sleep 2s
-
-# 커맨드 숏컷 데모
-Type "# Command shortcuts — instant single-agent execution"
-Enter
-Sleep 500ms
-Type@80ms 'claude "/implement add JWT auth middleware"'
-Enter
-Sleep 2s
-Type@80ms 'claude "/analyze security review of payment module"'
-Enter
-Sleep 2s
-
-# 완료
-Type "# Done! Token savings: $0.94 (Codex free tier)"
+# Help overview
+Type "node bin/triflux.mjs --help"
 Enter
 Sleep 3s

@@ -61,6 +61,10 @@
 
 ## Tri-CLI 합의 엔진
 
+<p align="center">
+  <img src="docs/assets/consensus-flow.svg" alt="Tri-CLI Consensus 플로우" width="680">
+</p>
+
 triflux의 핵심 혁신입니다. 단일 모델을 맹신하는 대신, 모든 Deep 스킬은 다음 과정을 거칩니다:
 
 ```
@@ -175,6 +179,10 @@ Phase 3: Resolution (합의율 < 70%일 경우)
 
 모든 도메인에서 두 가지 모드를 제공합니다:
 
+<p align="center">
+  <img src="docs/assets/deep-vs-light.svg" alt="Deep vs Light 비교" width="680">
+</p>
+
 | 항목 | Light | Deep |
 |------|-------|------|
 | **CLI** | 단일 (주로 Codex) | 3자 (Claude + Codex + Gemini) |
@@ -187,6 +195,13 @@ Phase 3: Resolution (합의율 < 70%일 경우)
 ---
 
 ## 아키텍처
+
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="triflux 아키텍처" width="680">
+</p>
+
+<details>
+<summary>인터랙티브 다이어그램 (GitHub 전용)</summary>
 
 ```mermaid
 graph TD
@@ -216,6 +231,8 @@ graph TD
 
     HUB -.->|MCP Bridge| External[외부 MCP 클라이언트]
 ```
+
+</details>
 
 ---
 
