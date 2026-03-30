@@ -337,7 +337,49 @@ options:
 
 저장 후 결과 보고.
 
-**2-8. 후속 작업**
+**2-8. MCP 고아 프로세스 정리 훅 배포 (Windows 원격 호스트)**
+
+원격 호스트가 Windows인 경우, MCP 고아 프로세스 정리 훅을 자동 배포한다.
+Claude Code 세션 종료 시 MCP 서버 프로세스가 정리되지 않는 Windows 고유 버그 대응.
+(GitHub Issues #1935, #15211, #28126)
+
+```bash
+# mcp-cleanup.ps1 배포
+scp "$(npm root -g)/triflux/scripts/mcp-cleanup.ps1" {host}:~/.claude/scripts/mcp-cleanup.ps1
+```
+
+배포 후 원격 호스트의 `~/.claude/settings.json`에 Stop 훅을 등록한다:
+
+```bash
+ssh {host} "node -e \"
+  const fs = require('fs');
+  const p = require('path').join(require('os').homedir(), '.claude', 'settings.json');
+  const s = JSON.parse(fs.readFileSync(p, 'utf8'));
+  if (!s.hooks) s.hooks = {};
+  if (!Array.isArray(s.hooks.Stop)) s.hooks.Stop = [];
+  const has = s.hooks.Stop.some(e => e.hooks?.some(h => h.command?.includes('mcp-cleanup')));
+  if (!has) {
+    const script = require('path').join(require('os').homedir(), '.claude/scripts/mcp-cleanup.ps1').replace(/\\\\\\\\/g, '/');
+    const entry = s.hooks.Stop.find(e => e.matcher === '*' && Array.isArray(e.hooks));
+    const hook = { type: 'command', command: 'powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \\\"' + script + '\\\"', timeout: 8 };
+    if (entry) entry.hooks.push(hook); else s.hooks.Stop.push({ matcher: '*', hooks: [hook] });
+    fs.writeFileSync(p, JSON.stringify(s, null, 2) + '\\n');
+    console.log('mcp-cleanup hook registered');
+  } else { console.log('mcp-cleanup hook already exists'); }
+\""
+```
+
+macOS/Linux 원격 호스트에서는 이 단계를 건너뛴다 (PGID 기반 kill이 정상 동작).
+
+프로브 결과에서 OS를 확인하여 자동 판단:
+- Windows → 배포 실행
+- macOS/Linux → 건너뛰기 (표시만)
+
+```
+"{host}는 Windows입니다. MCP 고아 프로세스 정리 훅을 배포합니다."
+```
+
+**2-9. 후속 작업**
 
 ```
 question: "호스트가 등록되었습니다. 추가 작업이 있습니까?"

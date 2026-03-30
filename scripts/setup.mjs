@@ -145,6 +145,11 @@ const SYNC_MAP = [
     label: "hub/workers/factory.mjs",
   },
   {
+    src: join(PLUGIN_ROOT, "scripts", "mcp-cleanup.ps1"),
+    dst: join(CLAUDE_DIR, "scripts", "mcp-cleanup.ps1"),
+    label: "mcp-cleanup.ps1",
+  },
+  {
     src: join(PLUGIN_ROOT, "hud", "hud-qos-status.mjs"),
     dst: join(CLAUDE_DIR, "hud", "hud-qos-status.mjs"),
     label: "hud-qos-status.mjs",
@@ -578,6 +583,44 @@ function applyHooks(s) {
       ],
     });
     changed = true;
+  }
+
+  // ── Stop 훅: MCP 고아 프로세스 정리 (Windows 전용) ──
+  if (process.platform === "win32") {
+    if (!Array.isArray(s.hooks.Stop)) s.hooks.Stop = [];
+
+    const cleanupScriptPath = join(CLAUDE_DIR, "scripts", "mcp-cleanup.ps1").replace(/\\/g, "/");
+    const hasCleanupHook = s.hooks.Stop.some((entry) =>
+      Array.isArray(entry.hooks) &&
+      entry.hooks.some((h) => typeof h.command === "string" && h.command.includes("mcp-cleanup")),
+    );
+
+    if (!hasCleanupHook && existsSync(cleanupScriptPath.replace(/\//g, "\\"))) {
+      // 기존 Stop 엔트리가 있으면 거기에 추가, 없으면 새 엔트리 생성
+      const existingEntry = s.hooks.Stop.find((entry) => entry.matcher === "*" && Array.isArray(entry.hooks));
+      const cleanupHook = {
+        type: "command",
+        command: `powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "${cleanupScriptPath}"`,
+        timeout: 8,
+      };
+
+      if (existingEntry) {
+        existingEntry.hooks.push(cleanupHook);
+      } else {
+        s.hooks.Stop.push({ matcher: "*", hooks: [cleanupHook] });
+      }
+      changed = true;
+    } else if (hasCleanupHook) {
+      for (const entry of s.hooks.Stop) {
+        if (!Array.isArray(entry.hooks)) continue;
+        for (const h of entry.hooks) {
+          if (typeof h.command === "string" && h.command.includes("mcp-cleanup") && !h.command.includes(cleanupScriptPath)) {
+            h.command = `powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "${cleanupScriptPath}"`;
+            changed = true;
+          }
+        }
+      }
+    }
   }
 
   // ── PreToolUse 훅: headless-guard (auto-route) ──
