@@ -49,6 +49,11 @@ export function resolveCliType(agentOrCli) {
   return AGENT_TO_CLI[agentOrCli] || agentOrCli;
 }
 
+// remote-spawn.mjs의 escapePwshSingleQuoted와 동일 — 순환 의존 방지를 위해 인라인
+function escapePwshSingleQuoted(value) {
+  return String(value).replace(/'/g, "''");
+}
+
 /** MCP 프로필별 프롬프트 힌트 (tfx-route.sh resolve_mcp_policy의 경량 미러) */
 const MCP_PROFILE_HINTS = {
   implement: "You have full filesystem read/write access. Implement changes directly.",
@@ -66,10 +71,11 @@ const MCP_PROFILE_HINTS = {
  * @param {boolean} [opts.handoff=true]
  * @param {string} [opts.mcp] — MCP 프로필 ("implement"|"analyze"|"review"|"docs")
  * @param {string} [opts.contextFile] — 컨텍스트 파일 경로 (최대 32KB, UTF-8 안전 절단)
+ * @param {string} [opts.cwd] — 워커 실행 작업 디렉터리
  * @returns {string} PowerShell 명령
  */
 export function buildHeadlessCommand(cli, prompt, resultFile, opts = {}) {
-  const { handoff = true, mcp, contextFile, model } = opts;
+  const { handoff = true, mcp, contextFile, model, cwd } = opts;
   const resolvedCli = resolveCliType(cli);
 
   // contextFile 처리: 32KB(32768 bytes) 초과 시 UTF-8 안전 절단
@@ -96,7 +102,14 @@ export function buildHeadlessCommand(cli, prompt, resultFile, opts = {}) {
 
   const backend = getBackend(resolvedCli);
   const promptExpr = `(Get-Content -Raw '${promptFile}')`;
-  return backend.buildArgs(promptExpr, resultFile, { ...opts, model });
+  const backendCommand = backend.buildArgs(promptExpr, resultFile, { ...opts, model });
+  const safeCwd = typeof cwd === "string" ? cwd.trim().replace(/[\r\n\x00-\x1f]/g, "") : "";
+  if (safeCwd && (safeCwd.startsWith("\\\\") || safeCwd.startsWith("//"))) {
+    throw new Error("[headless] UNC 경로는 cwd로 사용할 수 없습니다: " + safeCwd);
+  }
+  if (!safeCwd) return backendCommand;
+
+  return `Set-Location -LiteralPath '${escapePwshSingleQuoted(safeCwd)}'; ${backendCommand}`;
 }
 
 /**
@@ -160,7 +173,7 @@ async function dispatchProgressive(sessionName, assignments, opts = {}) {
 
     // 캡처 시작 + 컬러 배너 + 명령 dispatch
     const resultFile = join(RESULT_DIR, `${sessionName}-${paneName}.txt`).replace(/\\/g, "/");
-    const cmd = buildHeadlessCommand(assignment.cli, assignment.prompt, resultFile, { mcp: assignment.mcp, model: assignment.model });
+    const cmd = buildHeadlessCommand(assignment.cli, assignment.prompt, resultFile, { mcp: assignment.mcp, model: assignment.model, cwd: assignment.cwd });
     startCapture(sessionName, newPaneId);
     // pane 간 pipe-pane EBUSY 방지 — 이벤트 루프 해방하며 순차 대기
     if (i > 0) await new Promise(r => setTimeout(r, 300));
@@ -204,7 +217,7 @@ function dispatchBatch(sessionName, assignments, opts = {}) {
   return assignments.map((assignment, i) => {
     const paneName = `worker-${i + 1}`;
     const resultFile = join(RESULT_DIR, `${sessionName}-${paneName}.txt`).replace(/\\/g, "/");
-    const cmd = buildHeadlessCommand(assignment.cli, assignment.prompt, resultFile, { mcp: assignment.mcp, model: assignment.model });
+    const cmd = buildHeadlessCommand(assignment.cli, assignment.prompt, resultFile, { mcp: assignment.mcp, model: assignment.model, cwd: assignment.cwd });
     const scriptDir = join(RESULT_DIR, sessionName);
     const dispatch = dispatchCommand(sessionName, paneName, cmd, { scriptDir, scriptName: paneName });
 
