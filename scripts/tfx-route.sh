@@ -38,8 +38,26 @@ else
   TIMEOUT_BIN="timeout"   # Linux 기본
 fi
 
+# ── 임시 디렉토리 정규화 ──
+resolve_tmp_dir() {
+  local candidate=""
+  for candidate in "${TMPDIR:-}" "${TEMP:-}" "${TMP:-}" "/tmp"; do
+    [[ -n "$candidate" ]] || continue
+    if mkdir -p "$candidate" >/dev/null 2>&1; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  candidate="$(pwd)/.tfx-tmp"
+  mkdir -p "$candidate" >/dev/null 2>&1 || true
+  printf '%s\n' "$candidate"
+}
+
+TFX_TMP="$(resolve_tmp_dir)"
+
 # ── Async Job 디렉토리 ──
-TFX_JOBS_DIR="${TMPDIR:-/tmp}/tfx-jobs"
+TFX_JOBS_DIR="${TFX_TMP}/tfx-jobs"
 
 # ── --job-status / --job-result 핸들러 (인자 파싱 전에 처리) ──
 if [[ "${1:-}" == "--job-status" ]]; then
@@ -152,9 +170,8 @@ CLAUDE_BIN_ARGS_JSON="${CLAUDE_BIN_ARGS_JSON:-[]}"
 MAX_STDOUT_BYTES=51200  # 50KB — Claude 컨텍스트 절약
 TIMESTAMP=$(date +%s)
 RUN_ID="${TIMESTAMP}-$$-${RANDOM}"
-STDERR_LOG="/tmp/tfx-route-${AGENT_TYPE}-${RUN_ID}-stderr.log"
-STDOUT_LOG="/tmp/tfx-route-${AGENT_TYPE}-${RUN_ID}-stdout.log"
-TFX_TMP="${TMPDIR:-/tmp}"
+STDERR_LOG="${TFX_TMP}/tfx-route-${AGENT_TYPE}-${RUN_ID}-stderr.log"
+STDOUT_LOG="${TFX_TMP}/tfx-route-${AGENT_TYPE}-${RUN_ID}-stdout.log"
 
 # ── 팀 환경변수 ──
 TFX_TEAM_NAME="${TFX_TEAM_NAME:-}"
@@ -821,6 +838,20 @@ apply_cli_mode() {
       fi ;;
     gemini)
       if [[ "$CLI_TYPE" == "codex" ]]; then
+        case "$AGENT_TYPE" in
+          verifier)
+            CLI_TYPE="claude-native"; CLI_CMD=""; CLI_ARGS=""
+            CLI_EFFORT="n/a"; DEFAULT_TIMEOUT=1200; RUN_MODE="fg"; OPUS_OVERSIGHT="false"
+            echo "[tfx-route] TFX_CLI_MODE=gemini: verifier는 claude-native 유지" >&2
+            return 0
+            ;;
+          test-engineer)
+            CLI_TYPE="claude-native"; CLI_CMD=""; CLI_ARGS=""
+            CLI_EFFORT="n/a"; DEFAULT_TIMEOUT=1200; RUN_MODE="bg"; OPUS_OVERSIGHT="false"
+            echo "[tfx-route] TFX_CLI_MODE=gemini: test-engineer는 claude-native 유지" >&2
+            return 0
+            ;;
+        esac
         CLI_TYPE="gemini"; CLI_CMD="gemini"
         case "$AGENT_TYPE" in
           executor|debugger|deep-executor|architect|planner|critic|analyst|\
@@ -931,6 +962,9 @@ apply_verifier_override() {
       ;;
     claude)
       ORIGINAL_AGENT="${ORIGINAL_AGENT:-$AGENT_TYPE}"
+      CLI_TYPE="claude-native"
+      CLI_CMD=""
+      CLI_ARGS=""
       CLI_EFFORT="n/a"; DEFAULT_TIMEOUT=1200; RUN_MODE="fg"; OPUS_OVERSIGHT="false"
       echo "[tfx-route] TFX_VERIFIER_OVERRIDE=claude: verifier -> claude-native" >&2
       ;;
@@ -1001,6 +1035,9 @@ resolve_mcp_policy() {
   fi
 
   available_servers=$(get_cached_servers "$CLI_TYPE")
+  if [[ "$CLI_TYPE" == "codex" && "${TFX_CODEX_TRANSPORT:-auto}" != "mcp" ]]; then
+    available_servers=""
+  fi
   # Codex 0.115+: 미등록 서버에 config override(enabled=true/false 모두)를 보내면
   # "invalid transport" 에러 발생. 캐시 비어있으면 빈 문자열로 유지하여
   # mcp-filter가 override를 생성하지 않도록 한다.

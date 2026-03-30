@@ -313,7 +313,7 @@ tfx setup
 # Team — Multi-CLI 병렬 오케스트레이션
 /tfx-multi "refactor auth + update UI + add tests"
 ```
-n> **참고**: Deep 스킬(`/tfx-deep-*`, `/tfx-persist`, `/tfx-ralph`)은 완전한 Tri-CLI 합의(Tier 1)를 위해 **psmux**(또는 tmux), **triflux Hub**, **Codex CLI**, **Gemini CLI**가 필요합니다. 전제조건이 충족되지 않으면 Tier 3(Claude 단독, single-model) 모드로 자동 전환됩니다. `tfx doctor`로 환경을 확인하세요.
+> **참고**: Deep 스킬(`/tfx-deep-*`, `/tfx-persist`, `/tfx-ralph`)은 완전한 Tri-CLI 합의(Tier 1)를 위해 **psmux**(또는 tmux), **triflux Hub**, **Codex CLI**, **Gemini CLI**가 필요합니다. 전제조건이 충족되지 않으면 Tier 3(Claude 단독, single-model) 모드로 자동 전환됩니다. `tfx doctor`로 환경을 확인하세요.
 
 ---
 

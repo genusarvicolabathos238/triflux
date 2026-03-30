@@ -19,6 +19,22 @@ const PROJECT_ROOT = resolve(SCRIPT_DIR, '..', '..');
 const ROUTE_SCRIPT = toBashPath(resolve(PROJECT_ROOT, 'scripts', 'tfx-route.sh'));
 const FIXTURE_BIN = toBashPath(resolve(PROJECT_ROOT, 'tests', 'fixtures', 'bin'));
 
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, ms));
+}
+
+function removeTempDirWithRetry(target) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      rmSync(target, { recursive: true, force: true });
+      return true;
+    } catch {
+      sleepSync(100 * (attempt + 1));
+    }
+  }
+  return false;
+}
+
 // bash 실행 헬퍼 — stdout + stderr 합산 반환
 function runBash(command, extraEnv = {}) {
   const testTempDir = mkdtempSync(resolve(tmpdir(), 'triflux-gemini-test-'));
@@ -49,7 +65,7 @@ function runBash(command, extraEnv = {}) {
       },
     });
   } finally {
-    rmSync(testTempDir, { recursive: true, force: true });
+    removeTempDirWithRetry(testTempDir);
   }
 }
 

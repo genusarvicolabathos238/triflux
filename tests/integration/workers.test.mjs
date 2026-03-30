@@ -108,7 +108,7 @@ describe('tfx-route.sh wrapper integration', { timeout: 15000 }, () => {
     assert.match(output, /type=gemini/);
   });
 
-  it('verifier는 기본 route table에서 claude-native 경로를 사용해야 한다', () => {
+  it('verifier는 기본 route table에서 Codex review 경로를 사용해야 한다', () => {
     const result = spawnSync(BASH_EXE, [ROUTE_SCRIPT, 'verifier', 'route verify', 'analyze', '5'], {
       cwd: PROJECT_ROOT,
       encoding: 'utf8',
@@ -121,7 +121,7 @@ describe('tfx-route.sh wrapper integration', { timeout: 15000 }, () => {
 
     const output = `${result.stdout}\n${result.stderr}`;
     assert.equal(result.status, 0, output);
-    assert.match(output, /type=claude/);
+    assert.match(output, /type=codex/);
     assert.match(output, /agent=verifier/);
   });
 

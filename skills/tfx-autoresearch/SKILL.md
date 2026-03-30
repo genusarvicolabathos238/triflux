@@ -6,6 +6,7 @@ description: >
 triggers:
   - autoresearch
   - 자율 리서치
+  - 자동 리서치
   - 웹 리서치
   - 조사해
   - 알아봐
