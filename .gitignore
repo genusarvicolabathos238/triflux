@@ -43,6 +43,7 @@ dist/
 .cache/
 .tmp-research/
 .codex-artifacts/
+.codex-swarm/
 
 # 기타
 *.bak
