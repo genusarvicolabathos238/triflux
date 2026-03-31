@@ -293,26 +293,26 @@ psmux send-keys -t "codex-swarm-{id}" \
 # --skip-git-repo-check: codex exec 전용이므로 대화식 모드에서 사용 불가
 ```
 
-### Step 8: WT 탭 일괄 attach
+### Step 8: WT triflux 프로파일로 attach
 
-모든 세션을 하나의 WT 윈도우에 탭으로 attach한다:
+> WT `triflux` 프로파일 사용 필수 (`commandline: "psmux"`, One Half Dark, acrylic).
+> triflux 프로파일은 psmux를 기본 셸로 쓰므로 attach가 바로 동작한다.
+> 탭 대신 split-pane 사용 (feedback: WT 새탭 금지, split+dashboard 기본).
 
 ```bash
-# 모든 세션을 하나의 WT 윈도우에 탭으로 attach (검증된 패턴)
-BASH_EXE='C:\Program Files\Git\bin\bash.exe'
-wt.exe -w new \
-  --title "{title1}" "$BASH_EXE" ".codex-swarm/launch-{id1}.sh" \; \
-  new-tab --title "{title2}" "$BASH_EXE" ".codex-swarm/launch-{id2}.sh" \; \
-  ...
-```
+# 단일 세션: triflux 프로파일로 attach
+wt.exe -w new -p triflux --title "{title1}" psmux attach-session -t codex-swarm-{id1}
 
-psmux attach가 필요한 경우 (세션 재부착):
-```bash
-BASH_EXE='C:\Program Files\Git\bin\bash.exe'
+# 다중 세션: split-pane (상/하 분할)
 wt.exe -w new \
-  --title "{title1}" "$BASH_EXE" -c "psmux attach-session -t codex-swarm-{id1}" \; \
-  new-tab --title "{title2}" "$BASH_EXE" -c "psmux attach-session -t codex-swarm-{id2}" \; \
-  ...
+  -p triflux --title "{title1}" psmux attach-session -t codex-swarm-{id1} \; \
+  split-pane -H -p triflux --title "{title2}" psmux attach-session -t codex-swarm-{id2}
+
+# 3개 이상: 추가 split-pane
+wt.exe -w new \
+  -p triflux --title "{title1}" psmux attach-session -t codex-swarm-{id1} \; \
+  split-pane -H -p triflux --title "{title2}" psmux attach-session -t codex-swarm-{id2} \; \
+  split-pane -V -p triflux --title "{title3}" psmux attach-session -t codex-swarm-{id3}
 ```
 
 ### Step 9: 상태 보고
