@@ -40,7 +40,7 @@ function renderTmuxInstallHelp() {
 export { parseTeamArgs };
 
 export async function teamStart(args = []) {
-  const { agents, lead, layout, teammateMode, task: rawTask, assigns, autoAttach, progressive, timeoutSec, verbose, dashboard, dashboardLayout, dashboardSize, dashboardAnchor, mcpProfile, model } = parseTeamArgs(args);
+  const { agents, lead, layout, teammateMode, task: rawTask, assigns, autoAttach, progressive, timeoutSec, verbose, dashboard, dashboardLayout, dashboardSize, dashboardAnchor, mcpProfile, model, cwd } = parseTeamArgs(args);
   // --assign 사용 시 task를 자동 생성
   const task = rawTask || (assigns.length > 0 ? assigns.map(a => a.prompt).join(" + ") : "");
   if (!task) return printStartUsage();
@@ -84,7 +84,7 @@ export async function teamStart(args = []) {
   const state = effectiveMode === "in-process"
     ? await startInProcessTeam({ sessionId, task, lead, agents, subtasks, hubUrl })
     : effectiveMode === "headless"
-      ? await startHeadlessTeam({ sessionId, task, lead, agents, subtasks, layout, assigns, autoAttach, progressive, timeoutSec, verbose, dashboard, dashboardLayout, dashboardSize, dashboardAnchor, mcpProfile, model })
+      ? await startHeadlessTeam({ sessionId, task, lead, agents, subtasks, layout, assigns, autoAttach, progressive, timeoutSec, verbose, dashboard, dashboardLayout, dashboardSize, dashboardAnchor, mcpProfile, model, cwd })
       : effectiveMode === "wt"
         ? await startWtTeam({ sessionId, task, lead, agents, subtasks, layout, hubUrl })
         : await startMuxTeam({ sessionId, task, lead, agents, subtasks, layout, hubUrl, teammateMode: effectiveMode });

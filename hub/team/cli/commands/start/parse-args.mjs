@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { normalizeLayout, normalizeTeammateMode } from "../../services/runtime-mode.mjs";
 import { parseDashboardLayout } from "../../../dashboard-layout.mjs";
 import { parseDashboardAnchor } from "../../../dashboard-anchor.mjs";
@@ -54,6 +55,7 @@ export function parseTeamArgs(args = []) {
   let dashboardAnchor = "window";
   let mcpProfile = "";
   let model = "";
+  let cwd = "";
 
   for (let index = 0; index < args.length; index += 1) {
     const current = args[index];
@@ -92,6 +94,13 @@ export function parseTeamArgs(args = []) {
       mcpProfile = args[++index].trim();
     } else if ((current === "--model" || current === "-m") && args[index + 1]) {
       model = args[++index].trim();
+    } else if (current === "--cwd" && args[index + 1]) {
+      let p = args[++index].trim();
+      // MSYS/Git Bash 드라이브 문자 변환: /c/... → C:/...
+      if (process.platform === "win32" && /^\/[a-zA-Z]\//.test(p)) {
+        p = p[1].toUpperCase() + ":" + p.slice(2);
+      }
+      cwd = resolve(p);
     } else if (current.startsWith("-")) {
       console.warn(`  ⚠ 미인식 플래그 무시: ${current}`);
     } else {
@@ -116,5 +125,6 @@ export function parseTeamArgs(args = []) {
     dashboardAnchor,
     mcpProfile,
     model,
+    cwd,
   };
 }
