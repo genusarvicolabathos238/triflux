@@ -14,6 +14,13 @@ const FACTORY_CANDIDATES = [
 // MCP transport 실패 시 tfx-route.sh가 exec fallback을 수행할 수 있도록
 // CODEX_MCP_TRANSPORT_EXIT_CODE(70)으로 종료한다.
 const MCP_TRANSPORT_EXIT_CODE = 70;
+const GEMINI_RETRY_DELAY_MS = 5000;
+const GEMINI_RETRY_PATTERN_SNIPPETS = [
+  '429',
+  'quota',
+  'rate limit',
+  'resource_exhausted',
+];
 
 let createWorker = null;
 
@@ -129,6 +136,57 @@ function resolveDefaultMcpConfig(cwd) {
   return [];
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isGeminiQuotaRetrySignal(error) {
+  if (Number(error?.result?.exitCode) === 429) {
+    return true;
+  }
+
+  const fragments = [
+    error?.message,
+    error?.stderr,
+    error?.result?.stderr,
+  ]
+    .filter((value) => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => value.toLowerCase());
+
+  if (fragments.length === 0) return false;
+  const merged = fragments.join('\n');
+  return GEMINI_RETRY_PATTERN_SNIPPETS.some((pattern) => merged.includes(pattern));
+}
+
+async function runWorker(worker, type, prompt) {
+  const maxAttempts = type === 'gemini' ? 2 : 1;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await worker.run(prompt);
+    } catch (error) {
+      lastError = error;
+      const shouldRetry = (
+        type === 'gemini'
+        && attempt < maxAttempts
+        && isGeminiQuotaRetrySignal(error)
+      );
+
+      if (!shouldRetry) {
+        throw error;
+      }
+
+      process.stderr.write(
+        '[tfx-route-worker] Gemini 429/quota 감지 — 5초 후 1회 재시도합니다.\n',
+      );
+      await sleep(GEMINI_RETRY_DELAY_MS);
+    }
+  }
+
+  throw lastError;
+}
+
 const args = parseArgs(process.argv.slice(2));
 const prompt = readPromptFromStdin();
 
@@ -148,7 +206,7 @@ const worker = createWorker(args.type, {
 });
 
 try {
-  const result = await worker.run(prompt);
+  const result = await runWorker(worker, args.type, prompt);
   if (result.response) {
     process.stdout.write(result.response);
     if (!result.response.endsWith('\n')) process.stdout.write('\n');

@@ -297,22 +297,29 @@ psmux send-keys -t "codex-swarm-{id}" \
 
 > WT `triflux` 프로파일 사용 필수 (`commandline: "psmux"`, One Half Dark, acrylic).
 > triflux 프로파일은 psmux를 기본 셸로 쓰므로 attach가 바로 동작한다.
-> 탭 대신 split-pane 사용 (feedback: WT 새탭 금지, split+dashboard 기본).
+> **레이아웃 규칙:**
+> - 세션 1-3개: split-pane only (탭 불필요)
+> - 세션 4개+: **테마/웨이브별 탭 그룹핑** + 탭 내부 split-pane
+>   - 같은 카테고리/웨이브는 하나의 탭에 묶는다
+>   - 탭 내부 2-4개 split (가로 `-H` / 세로 `-V` 적절 배분)
+>   - 사용자가 탭/split 레이아웃을 명시하면 해당 지시를 우선한다
 
 ```bash
-# 단일 세션: triflux 프로파일로 attach
-wt.exe -w new -p triflux --title "{title1}" psmux attach-session -t codex-swarm-{id1}
-
-# 다중 세션: split-pane (상/하 분할)
-wt.exe -w new \
-  -p triflux --title "{title1}" psmux attach-session -t codex-swarm-{id1} \; \
-  split-pane -H -p triflux --title "{title2}" psmux attach-session -t codex-swarm-{id2}
-
-# 3개 이상: 추가 split-pane
+# 세션 1-3개: split-pane only
 wt.exe -w new \
   -p triflux --title "{title1}" psmux attach-session -t codex-swarm-{id1} \; \
   split-pane -H -p triflux --title "{title2}" psmux attach-session -t codex-swarm-{id2} \; \
   split-pane -V -p triflux --title "{title3}" psmux attach-session -t codex-swarm-{id3}
+
+# 세션 4개+: 테마별 탭 + 탭 내부 split (예: Wave1=3개, Wave2=4개)
+wt.exe -w 0 \
+  -p triflux --title "W1:{title1}" psmux attach-session -t {id1} \; \
+  split-pane -H -p triflux --title "W1:{title2}" psmux attach-session -t {id2} \; \
+  split-pane -V -p triflux --title "W1:{title3}" psmux attach-session -t {id3} \; \
+  new-tab -p triflux --title "W2:{title4}" psmux attach-session -t {id4} \; \
+  split-pane -H -p triflux --title "W2:{title5}" psmux attach-session -t {id5} \; \
+  split-pane -V -p triflux --title "W2:{title6}" psmux attach-session -t {id6} \; \
+  move-focus up \; split-pane -V -p triflux --title "W2:{title7}" psmux attach-session -t {id7}
 ```
 
 ### Step 9: 상태 보고

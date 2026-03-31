@@ -58,6 +58,16 @@ function createFakePsmux(binDir) {
 }
 
 function runGuardWithBashCommand(command, extraEnv = {}) {
+  return runGuardWithInput(
+    {
+      tool_name: "Bash",
+      tool_input: { command },
+    },
+    extraEnv,
+  );
+}
+
+function runGuardWithInput(payload, extraEnv = {}, options = {}) {
   const sandboxDir = mkdtempSync(join(tmpdir(), "tfx-guard-runtime-"));
   const binDir = join(sandboxDir, "bin");
   mkdirSync(binDir, { recursive: true });
@@ -66,11 +76,12 @@ function runGuardWithBashCommand(command, extraEnv = {}) {
   const originalPath = process.env.PATH || "";
 
   try {
+    if (options.multiState) {
+      writeFileSync(join(sandboxDir, "tfx-multi-state.json"), JSON.stringify(options.multiState), "utf8");
+    }
+
     return spawnSync(process.execPath, [GUARD_PATH], {
-      input: JSON.stringify({
-        tool_name: "Bash",
-        tool_input: { command },
-      }),
+      input: JSON.stringify(payload),
       encoding: "utf8",
       timeout: 5000,
       env: {
@@ -191,6 +202,86 @@ describe("headless-guard decision matrix (runtime)", () => {
     const payload = JSON.parse((result.stdout || "").trim());
     assert.equal(payload?.hookSpecificOutput?.hookEventName, "PreToolUse");
     assert.match(payload?.hookSpecificOutput?.additionalContext || "", /TFX_ALLOW_DIRECT_CLI=1/u);
+  });
+});
+
+describe("tfx-multi Edit/Write gate (runtime)", () => {
+  it("Edit with active tfx-multi gate should deny after threshold", () => {
+    const result = runGuardWithInput(
+      {
+        tool_name: "Edit",
+        tool_input: { file_path: "README.md", old_string: "a", new_string: "b" },
+      },
+      {},
+      {
+        multiState: {
+          active: true,
+          dispatched: false,
+          activatedAt: Date.now(),
+          nativeWorkCalls: 2,
+        },
+      },
+    );
+
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /headless dispatch 먼저 하세요/u);
+  });
+
+  it("Write with dispatched tfx-multi should pass silently under threshold, nudge at threshold", () => {
+    // NUDGE_THRESHOLD(4) 미만이면 조용히 통과
+    const result = runGuardWithInput(
+      {
+        tool_name: "Write",
+        tool_input: { file_path: "README.md", content: "hello" },
+      },
+      {},
+      {
+        multiState: {
+          active: true,
+          dispatched: true,
+          activatedAt: Date.now(),
+          nativeWorkCalls: 0,
+          nativeWorkCallsSinceDispatch: 0,
+        },
+      },
+    );
+
+    assert.equal(result.status, 0);
+    // threshold 미만이라 stdout이 비거나 nudge 없음
+    const stdout = (result.stdout || "").trim();
+    assert.equal(stdout, "", "threshold 미만에서는 조용히 통과");
+
+    // threshold 도달 시 nudge
+    const resultAtThreshold = runGuardWithInput(
+      {
+        tool_name: "Write",
+        tool_input: { file_path: "README.md", content: "hello" },
+      },
+      {},
+      {
+        multiState: {
+          active: true,
+          dispatched: true,
+          activatedAt: Date.now(),
+          nativeWorkCalls: 0,
+          nativeWorkCallsSinceDispatch: 3, // 다음 호출에서 4 → threshold 도달
+        },
+      },
+    );
+
+    assert.equal(resultAtThreshold.status, 0);
+    const payload = JSON.parse((resultAtThreshold.stdout || "").trim());
+    assert.match(payload?.hookSpecificOutput?.additionalContext || "", /코드 수정 중.*충돌 위험/u);
+  });
+
+  it("Edit without tfx-multi state should pass", () => {
+    const result = runGuardWithInput({
+      tool_name: "Edit",
+      tool_input: { file_path: "README.md", old_string: "a", new_string: "b" },
+    });
+
+    assert.equal(result.status, 0);
+    assert.equal((result.stderr || "").trim(), "");
   });
 });
 

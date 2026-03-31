@@ -257,6 +257,44 @@ async function main() {
     }
   }
 
+  // ── Edit/Write: tfx-multi 코드 수정 게이트 ──
+  if (toolName === "Edit" || toolName === "Write") {
+    const multiState = readMultiState();
+
+    // 일반 모드(tfx-multi 비활성)에서는 기존처럼 통과
+    if (!multiState || !multiState.active) {
+      process.exit(0);
+    }
+
+    if (!multiState.dispatched) {
+      multiState.nativeWorkCalls = (multiState.nativeWorkCalls || 0) + 1;
+      writeMultiState(multiState);
+
+      if (multiState.nativeWorkCalls > GATE_THRESHOLD) {
+        deny(
+          `[headless-guard] tfx-multi gate: ${toolName} 호출 ${multiState.nativeWorkCalls}회 — headless dispatch 먼저 하세요.\n` +
+          'Bash("tfx multi --teammate-mode headless --auto-attach --dashboard --assign \'codex:프롬프트:역할\' --timeout 600")',
+        );
+      }
+
+      nudge(
+        `[headless-guard] tfx-multi 활성 (${multiState.nativeWorkCalls}/${GATE_THRESHOLD}). ` +
+        "headless dispatch 후 작업을 시작하세요.",
+      );
+    }
+
+    // H3 fix: Agent gate와 동일하게 NUDGE_THRESHOLD 기반 주기적 nudge
+    multiState.nativeWorkCallsSinceDispatch = (multiState.nativeWorkCallsSinceDispatch || 0) + 1;
+    writeMultiState(multiState);
+
+    if (multiState.nativeWorkCallsSinceDispatch >= NUDGE_THRESHOLD) {
+      multiState.nativeWorkCallsSinceDispatch = 0;
+      writeMultiState(multiState);
+      nudge("[headless-guard] nudge: headless 워커가 코드 수정 중. 직접 수정은 충돌 위험.");
+    }
+    process.exit(0); // threshold 미만이면 조용히 통과
+  }
+
   // ── Agent: A(gate) + B(nudge) + CLI 래핑 deny ──
   if (toolName === "Agent") {
     const subType = (toolInput.subagent_type || "").toLowerCase();

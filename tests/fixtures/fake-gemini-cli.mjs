@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const args = process.argv.slice(2);
 
@@ -40,6 +43,24 @@ process.stdin.on('end', async () => {
     process.stderr.write('fake gemini failure\n');
     process.exit(Number(process.env.FAKE_GEMINI_EXIT_CODE));
     return;
+  }
+
+  if (process.env.FAKE_GEMINI_429 === '1') {
+    const markerDir = process.env.FAKE_GEMINI_429_DIR
+      || process.env.TMPDIR
+      || process.env.TMP
+      || process.env.TEMP
+      || tmpdir();
+    const markerPath = process.env.FAKE_GEMINI_429_MARKER
+      || join(markerDir, 'fake-gemini-429-once.marker');
+
+    if (!existsSync(markerPath)) {
+      mkdirSync(markerDir, { recursive: true });
+      writeFileSync(markerPath, String(Date.now()), 'utf8');
+      process.stderr.write('Error 429: RESOURCE_EXHAUSTED quota exceeded rate limit\n');
+      process.exit(1);
+      return;
+    }
   }
 
   if (process.env.FAKE_GEMINI_DELAY_MS) {

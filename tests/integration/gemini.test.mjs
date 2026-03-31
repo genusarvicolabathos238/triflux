@@ -17,6 +17,8 @@ import { toBashPath, BASH_EXE } from '../helpers/bash-path.mjs';
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(SCRIPT_DIR, '..', '..');
 const ROUTE_SCRIPT = toBashPath(resolve(PROJECT_ROOT, 'scripts', 'tfx-route.sh'));
+const WORKER_SCRIPT = resolve(PROJECT_ROOT, 'scripts', 'tfx-route-worker.mjs');
+const FAKE_GEMINI_CLI = resolve(PROJECT_ROOT, 'tests', 'fixtures', 'fake-gemini-cli.mjs');
 const FIXTURE_BIN = toBashPath(resolve(PROJECT_ROOT, 'tests', 'fixtures', 'bin'));
 
 function sleepSync(ms) {
@@ -189,6 +191,48 @@ describe('tfx-route.sh — Gemini MCP 필터링 (GEMINI_ALLOWED_SERVERS)', () =>
     assert.equal(result.status, 0, out(result));
     assert.match(out(result), /resolved_profile=none/);
     assert.match(out(result), /allowed_mcp_servers=none/);
+  });
+});
+
+// ── Gemini stream worker 429 재시도 ──
+
+describe('tfx-route.sh — Gemini stream worker 429 재시도', () => {
+  it('첫 호출이 429여도 5초 대기 후 1회 재시도에서 성공해야 한다', () => {
+    const testTempDir = mkdtempSync(resolve(tmpdir(), 'triflux-gemini-worker-retry-'));
+    const result = spawnSync(process.execPath, [
+      WORKER_SCRIPT,
+      '--type', 'gemini',
+      '--command', process.execPath,
+      '--command-args-json', JSON.stringify([FAKE_GEMINI_CLI]),
+      '--model', 'fake-gemini-model',
+      '--approval-mode', 'yolo',
+      '--cwd', testTempDir,
+    ], {
+      cwd: PROJECT_ROOT,
+      input: 'gemini-retry-429',
+      encoding: 'utf8',
+      timeout: 30_000,
+      env: {
+        ...process.env,
+        HOME: testTempDir,
+        TMPDIR: testTempDir,
+        TMP: testTempDir,
+        TEMP: testTempDir,
+        FAKE_GEMINI_429: '1',
+      },
+    });
+
+    const output = out(result);
+    try {
+      assert.equal(result.status, 0, output);
+      assert.match(result.stdout || '', /gemini:gemini-retry-429/);
+      assert.match(
+        result.stderr || '',
+        /Gemini 429\/quota 감지 — 5초 후 1회 재시도합니다\./,
+      );
+    } finally {
+      removeTempDirWithRetry(testTempDir);
+    }
   });
 });
 

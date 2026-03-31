@@ -79,18 +79,17 @@ describe('cache-buildup', () => {
 
   it('stale preflight cache면 codex/gemini를 직접 CLI probe로 판정한다', () => {
     const commands = [];
+    const isWin = process.platform === 'win32';
+    const codexProbe = isWin ? 'where codex 2>nul' : 'which codex 2>/dev/null';
+    const geminiProbe = isWin ? 'where gemini 2>nul' : 'which gemini 2>/dev/null';
     const result = probeTierEnvironment({
-      readPreflight: () => null,
-      platform: 'linux',
-      runExec: (command) => {
+      preflight: {},
+      execSyncFn: (command) => {
         commands.push(command);
-        if (
-          command === 'codex --version'
-          || command === 'psmux --version'
-          || command === 'curl -sf http://127.0.0.1:27888/status'
-        ) {
-          return '';
-        }
+        if (command === codexProbe) return '/usr/bin/codex';
+        if (command === 'psmux --version') return '';
+        if (command.startsWith('curl -sf')) return '{"hub":{"state":"running"},"pid":1}';
+        if (isWin && command.startsWith('where wt')) return '';
         throw new Error(`missing: ${command}`);
       },
     });
@@ -100,21 +99,20 @@ describe('cache-buildup', () => {
     assert.equal(result.tier, 'full');
     assert.ok(result.available_agents.includes('codex'));
     assert.ok(!result.available_agents.includes('gemini'));
-    assert.ok(commands.includes('codex --version'));
-    assert.ok(commands.includes('gemini --version'));
+    assert.ok(commands.includes(codexProbe));
+    assert.ok(commands.includes(geminiProbe));
   });
 
   it('fresh preflight cache가 있으면 codex/gemini 직접 probe 없이 캐시 값을 사용한다', () => {
     const commands = [];
     const result = probeTierEnvironment({
-      readPreflight: () => ({
+      preflight: {
         codex: { ok: false },
         gemini: { ok: true },
         hub: { ok: false },
         codex_plan: { plan: 'pro' },
-      }),
-      platform: 'linux',
-      runExec: (command) => {
+      },
+      execSyncFn: (command) => {
         commands.push(command);
         if (command === 'psmux --version') return '';
         throw new Error(`missing: ${command}`);
