@@ -577,6 +577,11 @@ function applyHooks(s) {
         },
         {
           type: "command",
+          command: `${nodeRef} "${pluginRoot}/scripts/mcp-gateway-ensure.mjs"`,
+          timeout: 8,
+        },
+        {
+          type: "command",
           command: `${nodeRef} "${pluginRoot}/scripts/preflight-cache.mjs"`,
           timeout: 5,
         },
