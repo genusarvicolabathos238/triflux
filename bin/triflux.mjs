@@ -727,6 +727,20 @@ function cmdSetup(options = {}) {
     }
   }
 
+  // ── psmux 기본 셸 자동 수정 (cmd.exe → PowerShell) ──
+  if (process.platform === "win32" && which("psmux")) {
+    try {
+      const shellOut = execSync("psmux show-options -g default-shell 2>NUL", { encoding: "utf8", timeout: 3000 }).trim();
+      if (!/powershell|pwsh/i.test(shellOut)) {
+        const pwsh = which("pwsh") ? "pwsh" : (which("powershell.exe") ? "powershell.exe" : "");
+        if (pwsh) {
+          execSync(`psmux set-option -g default-shell "${pwsh}"`, { timeout: 3000, stdio: "pipe" });
+          ok(`psmux 기본 셸 → ${pwsh}`);
+        }
+      }
+    } catch { /* psmux 서버 미실행 — 무시 */ }
+  }
+
   // ── 결과 추적 ──
   const summary = [];
 

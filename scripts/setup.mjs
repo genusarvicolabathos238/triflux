@@ -854,6 +854,27 @@ if (process.platform === "win32") {
   psmuxInstalled = true;
 }
 
+// ── psmux 기본 셸 자동 수정 (cmd.exe → PowerShell) ──
+if (psmuxInstalled && process.platform === "win32") {
+  try {
+    const shellOut = execFileSync("psmux", ["show-options", "-g", "default-shell"], { encoding: "utf8", timeout: 3000, stdio: ["pipe", "pipe", "pipe"] }).trim();
+    if (!/powershell|pwsh/i.test(shellOut)) {
+      // pwsh(7) 우선, powershell.exe(5) fallback
+      let pwsh = "";
+      try { execFileSync("where", ["pwsh"], { stdio: "ignore" }); pwsh = "pwsh"; } catch {
+        try { execFileSync("where", ["powershell.exe"], { stdio: "ignore" }); pwsh = "powershell.exe"; } catch {}
+      }
+      if (pwsh) {
+        execFileSync("psmux", ["set-option", "-g", "default-shell", pwsh], { timeout: 3000, stdio: "ignore" });
+        console.log(`  \x1b[32m✓\x1b[0m psmux 기본 셸 → ${pwsh}`);
+        synced++;
+      }
+    }
+  } catch {
+    // psmux show-options 미지원 또는 서버 미실행 — 무시
+  }
+}
+
 // ── stale 스킬 정리 (패키지에서 제거된 tfx-* 스킬 삭제) ──
 {
   const skillsDst = join(CLAUDE_DIR, "skills");
