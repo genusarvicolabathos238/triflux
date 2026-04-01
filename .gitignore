@@ -17,9 +17,12 @@ docs/*
 !docs/assets/
 !docs/demo.tape
 !docs/demo-light.tape
+!docs/design/
+!docs/research/
 
 # 리서치 (대외비 — 클론 레포, 분석 보고서, 설계문서)
 research/
+!docs/research/
 
 # 슬롭 분석 보고서
 slop-report.json
@@ -61,7 +64,6 @@ tests/hud/__mock_home__/
 download.bin
 
 # 내부 문서 (공개 금지)
-docs/design/
 docs/insights/
 docs/GAP-*
 docs/META-*
