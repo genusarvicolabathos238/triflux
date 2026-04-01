@@ -20,7 +20,7 @@ const CODEX_CONFIG_PATH = join(CODEX_DIR, "config.toml");
 const PKG = JSON.parse(readFileSync(join(PKG_ROOT, "package.json"), "utf8"));
 
 // 이 배열에 포함된 버전에서만 star prompt를 표시한다 (빈 배열 = 모든 버전에서 표시)
-const STAR_PROMPT_VERSIONS = ["9.2.2"];
+const STAR_PROMPT_VERSIONS = [];
 
 const REQUIRED_CODEX_PROFILES = [
   {
@@ -160,6 +160,19 @@ const CLI_COMMAND_SCHEMAS = Object.freeze({
     options: [
       { name: "command-or-tool", type: "string", description: "예: doctor, setup, delegate, delegate-reply, status" },
     ],
+  },
+  hooks: {
+    usage: "tfx hooks <scan|diff|apply|restore|status|set-priority|toggle>",
+    description: "훅 우선순위 관리 — 오케스트레이터 적용/복원, 우선순위 조정",
+    subcommands: {
+      scan: "현재 settings.json 훅 스캔",
+      diff: "오케스트레이터 적용 시 변경점 미리보기",
+      apply: "오케스트레이터 적용 (settings.json 통합)",
+      restore: "원래 settings.json 훅 복원",
+      status: "오케스트레이터 적용 상태 확인",
+      "set-priority": "특정 훅 우선순위 변경: hooks set-priority <hookId> <priority>",
+      toggle: "특정 훅 활성/비활성 토글: hooks toggle <hookId>",
+    },
   },
   hub: {
     usage: "tfx hub <start|stop|status> [--port N] [--json]",
@@ -2717,6 +2730,20 @@ async function main() {
           exitCode: e.status || EXIT_ERROR,
           reason: "error",
         });
+      }
+      return;
+    }
+    case "hooks": {
+      const hookManagerPath = join(PKG_ROOT, "hooks", "hook-manager.mjs");
+      const sub = cmdArgs[0] || "status";
+      try {
+        execFileSync(process.execPath, [hookManagerPath, sub, ...cmdArgs.slice(1)], {
+          stdio: "inherit",
+          timeout: 30000,
+          windowsHide: true,
+        });
+      } catch (e) {
+        if (e.status) process.exitCode = e.status;
       }
       return;
     }
