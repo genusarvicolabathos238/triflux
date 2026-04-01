@@ -292,10 +292,6 @@ export class CodexMcpWorker {
   }
 }
 
-export function createCodexMcpWorker(options = {}) {
-  return new CodexMcpWorker(options);
-}
-
 function parseCliArgs(argv) {
   const options = {
     command: process.env.CODEX_BIN || 'codex',

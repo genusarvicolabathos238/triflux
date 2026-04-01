@@ -38,4 +38,3 @@
  * @property {string} type - 'codex' | 'gemini' | 'claude' | 'delegator'
  */
 
-export const WORKER_TYPES = Object.freeze(['codex', 'gemini', 'claude', 'delegator']);

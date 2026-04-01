@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // triflux CLI — setup, doctor, version
-import { copyFileSync, existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, readdirSync, unlinkSync, rmSync, statSync, openSync, closeSync } from "fs";
+import { copyFileSync, existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, readdirSync, unlinkSync, statSync, openSync, closeSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
 import { execSync, execFileSync, spawn } from "child_process";
@@ -12,6 +12,11 @@ import { forceCleanupTeam } from "../hub/team/nativeProxy.mjs";
 import { cleanupStaleOmcTeams, inspectStaleOmcTeams } from "../hub/team/staleState.mjs";
 import { getPipelineStateDbPath } from "../hub/pipeline/state.mjs";
 import { ensureGeminiProfiles } from "../scripts/lib/gemini-profiles.mjs";
+import {
+  SYNC_MAP, SKILL_ALIASES, REQUIRED_CODEX_PROFILES,
+  syncAliasedSkillDir, hasProfileSection, replaceProfileSection,
+  ensureCodexProfiles, getVersion,
+} from "../scripts/setup.mjs";
 
 const PKG_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const CLAUDE_DIR = join(homedir(), ".claude");
@@ -22,72 +27,6 @@ const PKG = JSON.parse(readFileSync(join(PKG_ROOT, "package.json"), "utf8"));
 // 이 배열에 포함된 버전에서만 star prompt를 표시한다 (빈 배열 = 모든 버전에서 표시)
 const STAR_PROMPT_VERSIONS = [];
 
-const REQUIRED_CODEX_PROFILES = [
-  {
-    name: "codex53_high",
-    lines: [
-      'model = "gpt-5.3-codex"',
-      'model_reasoning_effort = "high"',
-    ],
-  },
-  {
-    name: "codex53_xhigh",
-    lines: [
-      'model = "gpt-5.3-codex"',
-      'model_reasoning_effort = "xhigh"',
-    ],
-  },
-  {
-    name: "spark53_low",
-    lines: [
-      'model = "gpt-5.3-codex-spark"',
-      'model_reasoning_effort = "low"',
-    ],
-  },
-];
-
-const SKILL_ALIASES = [
-  {
-    alias: "tfx-ralph",
-    source: "tfx-persist",
-  },
-];
-
-function buildAliasedSkillContent(srcContent, { alias, source }) {
-  return srcContent
-    .replace(/^name:\s*.+$/m, `name: ${alias}`)
-    .replaceAll(source, alias)
-    .replace(/^#\s+.+$/m, `# ${alias} — Compatibility Alias for ${source}`);
-}
-
-function syncAliasedSkillDir(srcDir, dstDir, { alias, source }) {
-  if (!existsSync(dstDir)) mkdirSync(dstDir, { recursive: true });
-
-  let count = 0;
-  for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
-    const srcPath = join(srcDir, entry.name);
-    const dstPath = join(dstDir, entry.name);
-
-    if (entry.isDirectory()) {
-      count += syncAliasedSkillDir(srcPath, dstPath, { alias, source });
-      continue;
-    }
-
-    if (!entry.name.endsWith(".md")) continue;
-
-    const rawContent = readFileSync(srcPath, "utf8");
-    const nextContent = entry.name === "SKILL.md"
-      ? buildAliasedSkillContent(rawContent, { alias, source })
-      : rawContent;
-
-    if (!existsSync(dstPath) || readFileSync(dstPath, "utf8") !== nextContent) {
-      writeFileSync(dstPath, nextContent, "utf8");
-      count++;
-    }
-  }
-
-  return count;
-}
 
 // ── 색상 체계 (triflux brand: amber/orange accent) ──
 const CYAN = "\x1b[36m";
@@ -328,13 +267,6 @@ function checkShellAvailable(shell) {
   } catch { return false; }
 }
 
-function getVersion(filePath) {
-  try {
-    const content = readFileSync(filePath, "utf8");
-    const match = content.match(/VERSION\s*=\s*"([^"]+)"/);
-    return match ? match[1] : null;
-  } catch { return null; }
-}
 
 function parseSessionCreated(rawValue) {
   const value = String(rawValue || "").trim();
@@ -459,57 +391,35 @@ async function cleanupStaleTeamSessions(staleSessions) {
   return { cleaned, failed };
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function hasProfileSection(tomlContent, profileName) {
-  const section = `^\\[profiles\\.${escapeRegExp(profileName)}\\]\\s*$`;
-  return new RegExp(section, "m").test(tomlContent);
-}
-
-function ensureCodexProfiles() {
-  try {
-    if (!existsSync(CODEX_DIR)) mkdirSync(CODEX_DIR, { recursive: true });
-
-    const original = existsSync(CODEX_CONFIG_PATH)
-      ? readFileSync(CODEX_CONFIG_PATH, "utf8")
-      : "";
-
-    let updated = original;
-    let added = 0;
-
-    for (const profile of REQUIRED_CODEX_PROFILES) {
-      if (hasProfileSection(updated, profile.name)) continue;
-
-      if (updated.length > 0 && !updated.endsWith("\n")) updated += "\n";
-      if (updated.trim().length > 0) updated += "\n";
-      updated += `[profiles.${profile.name}]\n${profile.lines.join("\n")}\n`;
-      added++;
-    }
-
-    if (added > 0) {
-      writeFileSync(CODEX_CONFIG_PATH, updated, "utf8");
-    }
-
-    return { ok: true, added };
-  } catch (e) {
-    return { ok: false, added: 0, message: e.message };
-  }
-}
 
 function previewCodexProfiles() {
   const original = existsSync(CODEX_CONFIG_PATH)
     ? readFileSync(CODEX_CONFIG_PATH, "utf8")
     : "";
-  const missingProfiles = REQUIRED_CODEX_PROFILES
-    .filter((profile) => !hasProfileSection(original, profile.name))
-    .map((profile) => profile.name);
+  let updated = original;
+  const profiles = [];
+
+  for (const profile of REQUIRED_CODEX_PROFILES) {
+    const before = updated;
+    if (hasProfileSection(updated, profile.name)) {
+      updated = replaceProfileSection(updated, profile.name, profile.lines);
+    } else {
+      if (updated.length > 0 && !updated.endsWith("\n")) updated += "\n";
+      if (updated.trim().length > 0) updated += "\n";
+      updated += `[profiles.${profile.name}]\n${profile.lines.join("\n")}\n`;
+    }
+    if (updated !== before) {
+      profiles.push(profile.name);
+    }
+  }
+
+  const windowsSandbox = process.platform === "win32" && !updated.includes("[windows]");
 
   return {
     path: CODEX_CONFIG_PATH,
-    missingProfiles,
-    change: missingProfiles.length > 0 ? (original ? "update" : "create") : "noop",
+    profiles,
+    windowsSandbox,
+    change: profiles.length > 0 || windowsSandbox ? (original ? "update" : "create") : "noop",
   };
 }
 
@@ -637,101 +547,6 @@ function checkCliCrossShell(cmd, installHint) {
 
 // ── 명령어 ──
 
-function getSetupSyncTargets() {
-  return [
-    {
-      src: join(PKG_ROOT, "scripts", "tfx-route.sh"),
-      dst: join(CLAUDE_DIR, "scripts", "tfx-route.sh"),
-      label: "tfx-route.sh",
-    },
-    {
-      src: join(PKG_ROOT, "hud", "hud-qos-status.mjs"),
-      dst: join(CLAUDE_DIR, "hud", "hud-qos-status.mjs"),
-      label: "hud-qos-status.mjs",
-    },
-    {
-      src: join(PKG_ROOT, "scripts", "notion-read.mjs"),
-      dst: join(CLAUDE_DIR, "scripts", "notion-read.mjs"),
-      label: "notion-read.mjs",
-    },
-    {
-      src: join(PKG_ROOT, "scripts", "tfx-route-post.mjs"),
-      dst: join(CLAUDE_DIR, "scripts", "tfx-route-post.mjs"),
-      label: "tfx-route-post.mjs",
-    },
-    {
-      src: join(PKG_ROOT, "scripts", "tfx-batch-stats.mjs"),
-      dst: join(CLAUDE_DIR, "scripts", "tfx-batch-stats.mjs"),
-      label: "tfx-batch-stats.mjs",
-    },
-    {
-      src: join(PKG_ROOT, "scripts", "lib", "mcp-filter.mjs"),
-      dst: join(CLAUDE_DIR, "scripts", "lib", "mcp-filter.mjs"),
-      label: "lib/mcp-filter.mjs",
-    },
-    {
-      src: join(PKG_ROOT, "scripts", "lib", "mcp-server-catalog.mjs"),
-      dst: join(CLAUDE_DIR, "scripts", "lib", "mcp-server-catalog.mjs"),
-      label: "lib/mcp-server-catalog.mjs",
-    },
-    {
-      src: join(PKG_ROOT, "scripts", "lib", "keyword-rules.mjs"),
-      dst: join(CLAUDE_DIR, "scripts", "lib", "keyword-rules.mjs"),
-      label: "lib/keyword-rules.mjs",
-    },
-    {
-      src: join(PKG_ROOT, "scripts", "lib", "gemini-profiles.mjs"),
-      dst: join(CLAUDE_DIR, "scripts", "lib", "gemini-profiles.mjs"),
-      label: "lib/gemini-profiles.mjs",
-    },
-    {
-      src: join(PKG_ROOT, "scripts", "tfx-route-worker.mjs"),
-      dst: join(CLAUDE_DIR, "scripts", "tfx-route-worker.mjs"),
-      label: "tfx-route-worker.mjs",
-    },
-    {
-      src: join(PKG_ROOT, "hub", "workers", "codex-mcp.mjs"),
-      dst: join(CLAUDE_DIR, "scripts", "hub", "workers", "codex-mcp.mjs"),
-      label: "hub/workers/codex-mcp.mjs",
-    },
-    {
-      src: join(PKG_ROOT, "hub", "workers", "delegator-mcp.mjs"),
-      dst: join(CLAUDE_DIR, "scripts", "hub", "workers", "delegator-mcp.mjs"),
-      label: "hub/workers/delegator-mcp.mjs",
-    },
-    {
-      src: join(PKG_ROOT, "hub", "workers", "interface.mjs"),
-      dst: join(CLAUDE_DIR, "scripts", "hub", "workers", "interface.mjs"),
-      label: "hub/workers/interface.mjs",
-    },
-    {
-      src: join(PKG_ROOT, "hub", "workers", "gemini-worker.mjs"),
-      dst: join(CLAUDE_DIR, "scripts", "hub", "workers", "gemini-worker.mjs"),
-      label: "hub/workers/gemini-worker.mjs",
-    },
-    {
-      src: join(PKG_ROOT, "hub", "workers", "claude-worker.mjs"),
-      dst: join(CLAUDE_DIR, "scripts", "hub", "workers", "claude-worker.mjs"),
-      label: "hub/workers/claude-worker.mjs",
-    },
-    {
-      src: join(PKG_ROOT, "hub", "workers", "factory.mjs"),
-      dst: join(CLAUDE_DIR, "scripts", "hub", "workers", "factory.mjs"),
-      label: "hub/workers/factory.mjs",
-    },
-    {
-      src: join(PKG_ROOT, "scripts", "remote-spawn.mjs"),
-      dst: join(CLAUDE_DIR, "scripts", "remote-spawn.mjs"),
-      label: "remote-spawn.mjs",
-    },
-    {
-      src: join(PKG_ROOT, "hub", "team", "psmux.mjs"),
-      dst: join(CLAUDE_DIR, "hub", "team", "psmux.mjs"),
-      label: "hub/team/psmux.mjs",
-    },
-  ];
-}
-
 function listSkillSyncActions() {
   const skillsSrc = join(PKG_ROOT, "skills");
   if (!existsSync(skillsSrc)) return [];
@@ -816,7 +631,7 @@ function previewMcpRegistrationActions(mcpUrl) {
 
 function buildSetupDryRunPlan() {
   const actions = [
-    ...getSetupSyncTargets().map(({ src, dst, label }) => describeSyncAction(src, dst, label)),
+    ...SYNC_MAP.map(({ src, dst, label }) => describeSyncAction(src, dst, label)),
     ...listSkillSyncActions(),
   ];
   const codexProfiles = previewCodexProfiles();
@@ -824,7 +639,8 @@ function buildSetupDryRunPlan() {
     type: "codex-profiles",
     path: codexProfiles.path,
     change: codexProfiles.change,
-    profiles: codexProfiles.missingProfiles,
+    profiles: codexProfiles.profiles,
+    windowsSandbox: codexProfiles.windowsSandbox,
   });
 
   const defaultHubUrl = `http://127.0.0.1:${process.env.TFX_HUB_PORT || "27888"}/mcp`;
@@ -846,7 +662,7 @@ function cmdSetup(options = {}) {
 
   console.log(`\n${BOLD}triflux setup${RESET}\n`);
 
-  for (const target of getSetupSyncTargets()) {
+  for (const target of SYNC_MAP) {
     syncFile(target.src, target.dst, target.label);
   }
 
@@ -913,9 +729,9 @@ function cmdSetup(options = {}) {
   if (!codexProfileResult.ok) {
     warn(`Codex profiles 설정 실패: ${codexProfileResult.message}`);
     summary.push({ item: "Codex profiles", status: "⚠️", detail: codexProfileResult.message });
-  } else if (codexProfileResult.added > 0) {
-    ok(`Codex profiles: ${codexProfileResult.added}개 추가됨 (~/.codex/config.toml)`);
-    summary.push({ item: "Codex profiles", status: "✅", detail: `${codexProfileResult.added}개 추가됨` });
+  } else if (codexProfileResult.changed > 0) {
+    ok(`Codex profiles: ${codexProfileResult.changed}개 반영됨 (~/.codex/config.toml)`);
+    summary.push({ item: "Codex profiles", status: "✅", detail: `${codexProfileResult.changed}개 반영됨` });
   } else {
     ok("Codex profiles: 이미 준비됨");
     summary.push({ item: "Codex profiles", status: "✅", detail: "이미 준비됨" });
@@ -1158,7 +974,7 @@ async function cmdDoctor(options = {}) {
     // ── fix 모드: 파일 동기화 + 캐시 정리 후 진단 ──
     if (fix) {
     section("Auto Fix");
-    for (const target of getSetupSyncTargets()) {
+    for (const target of SYNC_MAP) {
       syncFile(target.src, target.dst, target.label);
     }
     // 스킬 동기화
@@ -1182,8 +998,8 @@ async function cmdDoctor(options = {}) {
     const profileFix = ensureCodexProfiles();
     if (!profileFix.ok) {
       warn(`Codex Profiles 자동 복구 실패: ${profileFix.message}`);
-    } else if (profileFix.added > 0) {
-      ok(`Codex Profiles: ${profileFix.added}개 추가됨`);
+    } else if (profileFix.changed > 0) {
+      ok(`Codex Profiles: ${profileFix.changed}개 반영됨`);
     } else {
       info("Codex Profiles: 이미 최신 상태");
     }

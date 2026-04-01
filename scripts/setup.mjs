@@ -331,13 +331,18 @@ function ensureCodexProfiles() {
       writeFileSync(CODEX_CONFIG_PATH, updated, "utf8");
     }
 
-    return changed;
-  } catch {
-    return 0;
+    return { ok: true, changed };
+  } catch (error) {
+    return { ok: false, changed: 0, message: error.message };
   }
 }
 
-export { replaceProfileSection, hasProfileSection, detectDevMode, SYNC_MAP, BREADCRUMB_PATH, PLUGIN_ROOT, CLAUDE_DIR, SKILL_ALIASES };
+export {
+  replaceProfileSection, hasProfileSection, escapeRegExp, detectDevMode,
+  SYNC_MAP, BREADCRUMB_PATH, PLUGIN_ROOT, CLAUDE_DIR,
+  SKILL_ALIASES, REQUIRED_CODEX_PROFILES,
+  buildAliasedSkillContent, syncAliasedSkillDir, getVersion, ensureCodexProfiles,
+};
 
 async function main() {
 const isSync = process.argv.includes("--sync");
@@ -814,8 +819,8 @@ if (process.platform === "win32") {
 
 // ── Codex 프로필 자동 보정 ──
 
-const codexProfilesAdded = ensureCodexProfiles();
-if (codexProfilesAdded > 0) {
+const codexProfileResult = ensureCodexProfiles();
+if (codexProfileResult.changed > 0) {
   synced++;
 }
 
