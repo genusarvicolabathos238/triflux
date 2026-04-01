@@ -2,56 +2,17 @@
 
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-
-const SESSION_TTL_SEC = 30 * 60;
-const STATE_REL_PATH = join(".omc", "state", "cross-review.json");
-
-function readStdin() {
-  return new Promise((resolve) => {
-    let raw = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => {
-      raw += chunk;
-    });
-    process.stdin.on("end", () => resolve(raw));
-    process.stdin.on("error", () => resolve(""));
-  });
-}
-
-function parseJson(raw) {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-function nowSec() {
-  return Math.floor(Date.now() / 1000);
-}
-
-function resolveBaseDir(payload) {
-  if (typeof payload?.cwd === "string" && payload.cwd.trim()) return payload.cwd;
-  if (typeof payload?.directory === "string" && payload.directory.trim()) return payload.directory;
-  return process.cwd();
-}
-
-function expectedReviewer(author) {
-  if (author === "claude") return "codex";
-  if (author === "codex") return "claude";
-  if (author === "gemini") return "claude";
-  return "";
-}
-
-function shouldTrackPath(filePath) {
-  if (typeof filePath !== "string" || !filePath.trim()) return false;
-
-  const lower = filePath.toLowerCase();
-  if (lower.startsWith(".omc/") || lower.startsWith(".claude/")) return false;
-  if (lower === "package-lock.json" || lower.endsWith("/package-lock.json")) return false;
-  if (/\.(md|lock|yml|yaml)$/i.test(lower)) return false;
-  return true;
-}
+import { nudge, deny } from "./lib/hook-utils.mjs";
+import {
+  readStdin,
+  parseJson,
+  nowSec,
+  resolveBaseDir,
+  shouldTrackPath,
+  expectedReviewer,
+  SESSION_TTL_SEC,
+  STATE_REL_PATH,
+} from "./lib/cross-review-utils.mjs";
 
 function loadState(statePath) {
   if (!existsSync(statePath)) return null;
@@ -75,21 +36,6 @@ function loadState(statePath) {
 function isGitCommitCommand(command) {
   if (typeof command !== "string") return false;
   return /\bgit\s+commit\b/i.test(command);
-}
-
-function nudge(message) {
-  process.stdout.write(JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      additionalContext: message,
-    },
-  }));
-  process.exit(0);
-}
-
-function deny(message) {
-  process.stderr.write(message);
-  process.exit(2);
 }
 
 function summarizePending(entries) {

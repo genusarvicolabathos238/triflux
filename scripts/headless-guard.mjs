@@ -28,6 +28,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { nudge, deny } from "./lib/hook-utils.mjs";
 
 const CACHE_FILE = join(tmpdir(), "tfx-psmux-check.json");
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5분
@@ -56,16 +57,6 @@ function writeMultiState(state) {
   try {
     writeFileSync(MULTI_STATE_FILE, JSON.stringify(state));
   } catch { /* ignore */ }
-}
-
-function nudge(message) {
-  process.stdout.write(JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      additionalContext: message,
-    },
-  }));
-  process.exit(0);
 }
 
 function isPsmuxInstalled() {
@@ -145,11 +136,6 @@ function autoRoute(updatedCommand, reason) {
     },
   }));
   process.exit(0);
-}
-
-function deny(reason) {
-  process.stderr.write(reason);
-  process.exit(2);
 }
 
 const HEADLESS_FALLBACK_COMMAND =

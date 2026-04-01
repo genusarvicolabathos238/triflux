@@ -2,40 +2,16 @@
 
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
-
-const SESSION_TTL_SEC = 30 * 60;
-const STATE_REL_PATH = join(".omc", "state", "cross-review.json");
-const EXCLUDED_FILE_PATTERN = /\.(md|lock|yml|yaml)$/i;
-
-function nowSec() {
-  return Math.floor(Date.now() / 1000);
-}
-
-function readStdin() {
-  return new Promise((resolve) => {
-    let raw = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => {
-      raw += chunk;
-    });
-    process.stdin.on("end", () => resolve(raw));
-    process.stdin.on("error", () => resolve(""));
-  });
-}
-
-function parseJson(raw) {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-function resolveBaseDir(payload) {
-  if (typeof payload?.cwd === "string" && payload.cwd.trim()) return payload.cwd;
-  if (typeof payload?.directory === "string" && payload.directory.trim()) return payload.directory;
-  return process.cwd();
-}
+import {
+  readStdin,
+  parseJson,
+  nowSec,
+  resolveBaseDir,
+  shouldTrackPath,
+  expectedReviewer,
+  SESSION_TTL_SEC,
+  STATE_REL_PATH,
+} from "./lib/cross-review-utils.mjs";
 
 function resolveStatePath(baseDir) {
   return join(baseDir, STATE_REL_PATH);
@@ -89,16 +65,6 @@ function normalizePath(filePath, baseDir) {
   }
 
   return normalized.replace(/\\/g, "/").replace(/^\.\//, "");
-}
-
-function shouldTrackPath(filePath) {
-  if (!filePath) return false;
-  const lower = filePath.toLowerCase();
-
-  if (lower.startsWith(".omc/") || lower.startsWith(".claude/")) return false;
-  if (lower === "package-lock.json" || lower.endsWith("/package-lock.json")) return false;
-  if (EXCLUDED_FILE_PATTERN.test(lower)) return false;
-  return true;
 }
 
 function extractFilePath(toolInput) {
@@ -183,13 +149,6 @@ function detectAuthor(payload) {
   const actor = detectCliActor(payload);
   if (actor) return actor;
   return "claude";
-}
-
-function expectedReviewer(author) {
-  if (author === "claude") return "codex";
-  if (author === "codex") return "claude";
-  if (author === "gemini") return "claude";
-  return "";
 }
 
 function applyReviewer(state, reviewer, ts) {

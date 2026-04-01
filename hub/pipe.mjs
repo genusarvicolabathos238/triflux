@@ -18,6 +18,7 @@ import {
   listPipelineStates,
   readPipelineState,
 } from './pipeline/state.mjs';
+import { safeJsonParse } from './workers/worker-utils.mjs';
 
 const DEFAULT_HEARTBEAT_TTL_MS = 60000;
 
@@ -27,14 +28,6 @@ export function getPipePath(sessionId = process.pid) {
     return `\\\\.\\pipe\\triflux-${sessionId}`;
   }
   return join('/tmp', `triflux-${sessionId}.sock`);
-}
-
-function safeJsonParse(line) {
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
 }
 
 function normalizeTopics(topics) {

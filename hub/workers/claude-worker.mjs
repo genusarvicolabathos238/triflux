@@ -3,24 +3,7 @@
 
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
-
-const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
-const DEFAULT_KILL_GRACE_MS = 1000;
-
-function toStringList(value) {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => String(item ?? '').trim())
-    .filter(Boolean);
-}
-
-function safeJsonParse(line) {
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
-}
+import { toStringList, safeJsonParse, createWorkerError, DEFAULT_TIMEOUT_MS, DEFAULT_KILL_GRACE_MS } from './worker-utils.mjs';
 
 function appendTextFragments(value, parts) {
   if (value == null) return;
@@ -57,12 +40,6 @@ function findSessionId(event) {
     || event?.message?.session_id
     || event?.message?.sessionId
     || null;
-}
-
-function createWorkerError(message, details = {}) {
-  const error = new Error(message);
-  Object.assign(error, details);
-  return error;
 }
 
 function buildClaudeArgs(worker, options) {

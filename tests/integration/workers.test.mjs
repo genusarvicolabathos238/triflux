@@ -10,6 +10,13 @@ import { toBashPath, BASH_EXE } from '../helpers/bash-path.mjs';
 import { GeminiWorker } from '../../hub/workers/gemini-worker.mjs';
 import { ClaudeWorker } from '../../hub/workers/claude-worker.mjs';
 import { createWorker } from '../../hub/workers/factory.mjs';
+import {
+  DEFAULT_KILL_GRACE_MS,
+  DEFAULT_TIMEOUT_MS,
+  createWorkerError,
+  safeJsonParse,
+  toStringList,
+} from '../../hub/workers/worker-utils.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(TEST_DIR, '..', '..');
@@ -86,6 +93,22 @@ describe('createWorker()', { timeout: 15000 }, () => {
     assert.equal(createWorker('claude').constructor.name, 'ClaudeWorker');
     assert.equal(createWorker('delegator').constructor.name, 'DelegatorMcpWorker');
     assert.throws(() => createWorker('unknown'), /Unknown worker type/);
+  });
+});
+
+describe('worker-utils', () => {
+  it('공유 워커 유틸의 기본 contract를 유지해야 한다', () => {
+    assert.equal(DEFAULT_TIMEOUT_MS, 15 * 60 * 1000);
+    assert.equal(DEFAULT_KILL_GRACE_MS, 1000);
+    assert.deepEqual(toStringList([' foo ', null, '', 'bar']), ['foo', 'bar']);
+    assert.deepEqual(toStringList('nope'), []);
+    assert.deepEqual(safeJsonParse('{"ok":true}'), { ok: true });
+    assert.equal(safeJsonParse('{'), null);
+
+    const error = createWorkerError('worker failed', { code: 'WORKER_FAIL', detail: 1 });
+    assert.equal(error.message, 'worker failed');
+    assert.equal(error.code, 'WORKER_FAIL');
+    assert.equal(error.detail, 1);
   });
 });
 

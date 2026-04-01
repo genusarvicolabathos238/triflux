@@ -111,6 +111,13 @@ describe('setup-sync: SYNC_MAP', () => {
     assert.ok(entry.src.replace(/\\/g, '/').includes('hub/team/agent-map.json'), 'src path must reference agent-map.json');
   });
 
+  it('worker-utils.mjs가 SYNC_MAP에 포함되어 있다', () => {
+    const entry = SYNC_MAP.find(e => e.label === 'hub/workers/worker-utils.mjs');
+    assert.ok(entry, 'SYNC_MAP must include hub/workers/worker-utils.mjs');
+    assert.ok(entry.src.replace(/\\/g, '/').includes('hub/workers/worker-utils.mjs'), 'src path must reference worker-utils.mjs');
+    assert.ok(entry.dst.replace(/\\/g, '/').endsWith('/scripts/hub/workers/worker-utils.mjs'), 'dst path must sync worker-utils.mjs into ~/.claude/scripts');
+  });
+
   it('agent-map.json의 synced 경로가 tfx-route.sh 상대경로와 일치한다', () => {
     const routeEntry = SYNC_MAP.find(e => e.label === 'tfx-route.sh');
     const mapEntry = SYNC_MAP.find(e => e.label === 'hub/team/agent-map.json');
