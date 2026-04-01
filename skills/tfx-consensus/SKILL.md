@@ -1,8 +1,10 @@
 ---
 name: tfx-consensus
-description: 3자 합의 엔진 — 모든 Deep 스킬의 핵심 인프라. Claude/Codex/Gemini 독립 분석 결과를 교차검증하여 편향 없는 합의를 도출한다.
-triggers: []
-argument-hint: "(내부 전용 — Deep 스킬이 자동 호출)"
+description: >
+  3자 합의 엔진 — 모든 Deep 스킬의 핵심 인프라. Claude/Codex/Gemini 독립 분석 결과를 교차검증하여 편향 없는 합의를 도출한다.
+  독립 실행도 가능: '합의로 분석해', '3자 합의', 'consensus' 같은 요청 시 직접 호출 가능.
+triggers: [consensus, 합의]
+argument-hint: "<분석 주제 또는 컨텍스트> (Deep 스킬 내부 자동 호출 또는 직접 사용 가능)"
 ---
 
 # tfx-consensus — Tri-CLI Consensus Engine

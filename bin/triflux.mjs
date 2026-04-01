@@ -876,6 +876,21 @@ function cmdSetup(options = {}) {
           skillCount++;
         }
       }
+      // references/ 디렉토리 동기화 (존재하면)
+      const refSrc = join(skillsSrc, name, "references");
+      const refDst = join(skillsDst, name, "references");
+      if (existsSync(refSrc)) {
+        mkdirSync(refDst, { recursive: true });
+        for (const refFile of readdirSync(refSrc)) {
+          const rSrc = join(refSrc, refFile);
+          const rDst = join(refDst, refFile);
+          if (statSync(rSrc).isFile()) {
+            if (!existsSync(rDst) || readFileSync(rSrc, "utf8") !== readFileSync(rDst, "utf8")) {
+              copyFileSync(rSrc, rDst);
+            }
+          }
+        }
+      }
     }
     for (const { alias, source } of SKILL_ALIASES) {
       const srcDir = join(skillsSrc, source);
