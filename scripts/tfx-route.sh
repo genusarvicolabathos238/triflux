@@ -617,12 +617,23 @@ codex_gte() {
 _GEMINI_PROFILE_CACHE=""
 resolve_gemini_profile() {
   local profile="$1"
+  if [[ "$profile" == gemini-* ]]; then
+    echo "$profile"
+    return
+  fi
   if [[ -z "$_GEMINI_PROFILE_CACHE" && -f "$GEMINI_PROFILES_PATH" ]]; then
     _GEMINI_PROFILE_CACHE=$(cat "$GEMINI_PROFILES_PATH" 2>/dev/null || echo "{}")
+  fi
+  local settings_path="${HOME}/.gemini/settings.json"
+  local settings_cache="{}"
+  if [[ -f "$settings_path" ]]; then
+    settings_cache=$(cat "$settings_path" 2>/dev/null || echo "{}")
   fi
   local result
   result=$("$NODE_BIN" -e "
     const name = process.argv[1];
+    const primaryRaw = process.argv[2] || '{}';
+    const settingsRaw = process.argv[3] || '{}';
     const defaults = {
       pro31: 'gemini-3.1-pro-preview',
       flash3: 'gemini-3-flash-preview',
@@ -630,13 +641,74 @@ resolve_gemini_profile() {
       flash25: 'gemini-2.5-flash',
       lite25: 'gemini-2.5-flash-lite'
     };
-    try {
-      const cfg = JSON.parse(process.argv[2] || '{}');
-      const p = cfg.profiles?.[name];
-      if (p?.model) { process.stdout.write(p.model); return; }
-    } catch {}
-    process.stdout.write(defaults[name] || 'gemini-3.1-pro-preview');
-  " "$profile" "$_GEMINI_PROFILE_CACHE" 2>/dev/null)
+
+    if (typeof name === 'string' && name.startsWith('gemini-')) {
+      process.stdout.write(name);
+      process.exit(0);
+    }
+
+    const parseJson = (raw) => {
+      try {
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch {
+        return {};
+      }
+    };
+
+    const getModelValue = (entry) => {
+      if (!entry) return '';
+      if (typeof entry === 'string') return entry;
+      if (typeof entry !== 'object') return '';
+      if (typeof entry.model === 'string') return entry.model;
+      if (typeof entry.name === 'string' && entry.name.startsWith('gemini-')) return entry.name;
+      if (entry.model && typeof entry.model.name === 'string') return entry.model.name;
+      return '';
+    };
+
+    const getProfileBuckets = (cfg) => {
+      const buckets = [];
+      if (cfg.profiles && typeof cfg.profiles === 'object') buckets.push(cfg.profiles);
+      if (cfg.model?.profiles && typeof cfg.model.profiles === 'object') buckets.push(cfg.model.profiles);
+      if (cfg.modelProfiles && typeof cfg.modelProfiles === 'object') buckets.push(cfg.modelProfiles);
+      if (cfg.models && typeof cfg.models === 'object') buckets.push(cfg.models);
+      return buckets;
+    };
+
+    const getDefaultModel = (cfg) => {
+      return (
+        (typeof cfg.defaultModel === 'string' && cfg.defaultModel) ||
+        (typeof cfg.default_profile === 'string' && cfg.default_profile) ||
+        (typeof cfg.defaultProfile === 'string' && cfg.defaultProfile) ||
+        (typeof cfg.model === 'string' && cfg.model) ||
+        (typeof cfg.model?.default === 'string' && cfg.model.default) ||
+        ''
+      );
+    };
+
+    const sources = [parseJson(primaryRaw), parseJson(settingsRaw)];
+    for (const cfg of sources) {
+      for (const bucket of getProfileBuckets(cfg)) {
+        const value = getModelValue(bucket[name]);
+        if (value) {
+          process.stdout.write(value);
+          process.exit(0);
+        }
+      }
+    }
+
+    if (name === 'default') {
+      for (const cfg of sources) {
+        const value = getDefaultModel(cfg);
+        if (value) {
+          process.stdout.write(value);
+          process.exit(0);
+        }
+      }
+    }
+
+    process.stdout.write(defaults[name] || defaults.pro31);
+  " "$profile" "$_GEMINI_PROFILE_CACHE" "$settings_cache" 2>/dev/null)
   echo "${result:-gemini-3.1-pro-preview}"
 }
 
@@ -853,6 +925,7 @@ CODEX_MCP_TRANSPORT_EXIT_CODE=70
 
 apply_cli_mode() {
   local codex_base="--dangerously-bypass-approvals-and-sandbox --skip-git-repo-check"
+  local gemini_tier=""
 
   case "$TFX_CLI_MODE" in
     codex)
@@ -894,7 +967,12 @@ apply_cli_mode() {
           *)
             CLI_ARGS="-m $(resolve_gemini_profile flash3) -y --prompt"; CLI_EFFORT="flash3" ;;
         esac
-        echo "[tfx-route] TFX_CLI_MODE=gemini: $AGENT_TYPE → gemini($CLI_EFFORT)로 리매핑" >&2
+        case "$CLI_EFFORT" in
+          pro*) gemini_tier="pro" ;;
+          flash*|lite*) gemini_tier="flash" ;;
+          *) gemini_tier="$CLI_EFFORT" ;;
+        esac
+        echo "[tfx-route] TFX_CLI_MODE=gemini: $AGENT_TYPE → gemini($gemini_tier)로 리매핑" >&2
       fi ;;
     auto)
       if [[ "$CLI_TYPE" == "codex" ]] && ! command -v "$CODEX_BIN" &>/dev/null; then
@@ -1226,7 +1304,7 @@ _gemini_run_once() {
   else
     "$TIMEOUT_BIN" "$TIMEOUT_SEC" "$CLI_CMD" "${g_args[@]}" "$prompt" >"$STDOUT_LOG" 2>"$STDERR_LOG" &
   fi
-  echo "$!"
+  GEMINI_RUN_PID=$!
 }
 
 gemini_with_retry() {
@@ -1243,7 +1321,12 @@ gemini_with_retry() {
   while (( attempt < max_retries )); do
     exit_code_local=0
     local pid
-    pid=$(_gemini_run_once "$use_tee_flag" "$prompt" "${g_args[@]}")
+    _gemini_run_once "$use_tee_flag" "$prompt" "${g_args[@]}"
+    pid="${GEMINI_RUN_PID:-}"
+    if [[ -z "$pid" ]]; then
+      echo "[tfx-route] Gemini: worker pid 획득 실패" >&2
+      return 1
+    fi
 
     local health_ok=true
     local intervals=(1 2 3 5 8)

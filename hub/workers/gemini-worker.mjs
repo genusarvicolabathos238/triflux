@@ -2,25 +2,10 @@
 // ADR-006: --output-format stream-json 기반 단발 실행 워커.
 
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { delimiter, extname, join } from 'node:path';
 import readline from 'node:readline';
-
-const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
-const DEFAULT_KILL_GRACE_MS = 1000;
-
-function toStringList(value) {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => String(item ?? '').trim())
-    .filter(Boolean);
-}
-
-function safeJsonParse(line) {
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
-}
+import { toStringList, safeJsonParse, createWorkerError, DEFAULT_TIMEOUT_MS, DEFAULT_KILL_GRACE_MS } from './worker-utils.mjs';
 
 function appendTextFragments(value, parts) {
   if (value == null) return;
@@ -84,10 +69,100 @@ function buildGeminiArgs(options) {
   return args;
 }
 
-function createWorkerError(message, details = {}) {
-  const error = new Error(message);
-  Object.assign(error, details);
-  return error;
+function resolveSpawnCommand(command, env = process.env) {
+  const raw = String(command ?? '').trim();
+  if (!raw || process.platform !== 'win32') return raw;
+
+  const pathExts = (env.PATHEXT || process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD')
+    .split(';')
+    .map((ext) => ext.trim().toLowerCase())
+    .filter(Boolean);
+  const extensions = extname(raw)
+    ? ['']
+    : [...new Set(['.cmd', '.exe', '.bat', ...pathExts, ''])];
+
+  const tryResolve = (base) => {
+    for (const ext of extensions) {
+      const candidate = `${base}${ext}`;
+      if (existsSync(candidate)) return candidate;
+    }
+    return null;
+  };
+
+  if (raw.includes('\\') || raw.includes('/')) {
+    return tryResolve(raw.replaceAll('/', '\\')) || raw;
+  }
+
+  const pathEntries = String(env.PATH || process.env.PATH || '')
+    .split(delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  for (const entry of pathEntries) {
+    const resolved = tryResolve(join(entry, raw));
+    if (resolved) return resolved;
+  }
+
+  return raw;
+}
+
+function quoteWindowsCmdArg(value) {
+  const raw = String(value ?? '');
+  if (raw.length === 0) return '""';
+
+  const escaped = raw
+    .replace(/(\\*)"/g, '$1$1\\"')
+    .replace(/(\\+)$/g, '$1$1');
+
+  return /[\s"&()<>^|]/.test(raw)
+    ? `"${escaped}"`
+    : escaped;
+}
+
+function quotePosixShellArg(value) {
+  const raw = String(value ?? '');
+  return `'${raw.replaceAll("'", `'\"'\"'`)}'`;
+}
+
+function toBashPath(value) {
+  return String(value ?? '')
+    .replace(/^([A-Za-z]):/, (_, drive) => `/${drive.toLowerCase()}`)
+    .replaceAll('\\', '/');
+}
+
+function buildSpawnSpec(command, args, env = process.env) {
+  const resolvedCommand = resolveSpawnCommand(command, env);
+
+  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(resolvedCommand)) {
+    const commandLine = [resolvedCommand, ...args]
+      .map((part) => quoteWindowsCmdArg(part))
+      .join(' ');
+
+    return {
+      command: 'cmd.exe',
+      args: ['/d', '/s', '/c', commandLine],
+      resolvedCommand,
+    };
+  }
+
+  if (process.platform === 'win32' && !extname(resolvedCommand) && existsSync(resolvedCommand)) {
+    const bashCommand = env.TFX_BASH_BIN || env.BASH || 'bash';
+    const commandLine = [toBashPath(resolvedCommand), ...args]
+      .map((part) => quotePosixShellArg(part))
+      .join(' ');
+
+    return {
+      command: bashCommand,
+      args: ['-lc', commandLine],
+      resolvedCommand,
+    };
+  }
+
+  return {
+    command: resolvedCommand,
+    args,
+    resolvedCommand,
+  };
 }
 
 /**
@@ -187,10 +262,12 @@ export class GeminiWorker {
         promptArgument: options.promptArgument ?? '',
       }),
     ];
+    const env = { ...this.env, ...(options.env || {}) };
+    const spawnSpec = buildSpawnSpec(this.command, args, env);
 
-    const child = spawn(this.command, args, {
+    const child = spawn(spawnSpec.command, spawnSpec.args, {
       cwd: options.cwd || this.cwd,
-      env: { ...this.env, ...(options.env || {}) },
+      env,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -269,10 +346,13 @@ export class GeminiWorker {
     const response = [
       extractText(resultEvent),
       ...events
-        .filter((event) => event?.type === 'message' || event?.type === 'assistant')
+        .filter((event) => (
+          event?.type === 'assistant'
+          || (event?.type === 'message' && event?.role === 'assistant')
+        ))
         .map((event) => extractText(event))
         .filter(Boolean),
-      ...stdoutLines,
+      ...stdoutLines.filter((line) => line.trim() !== '""'),
     ]
       .filter(Boolean)
       .join('\n')
@@ -280,8 +360,8 @@ export class GeminiWorker {
 
     const result = {
       type: 'gemini',
-      command: this.command,
-      args,
+      command: spawnSpec.resolvedCommand,
+      args: spawnSpec.args,
       response,
       events,
       resultEvent,

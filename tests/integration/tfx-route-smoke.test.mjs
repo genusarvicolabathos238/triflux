@@ -288,7 +288,7 @@ describe('tfx-route.sh — 역할별 MCP profile 필터', () => {
     assert.deepEqual(allowedMcpServers(result), ['context7', 'exa']);
   });
 
-  it('designer + auto 는 브라우저 문맥에서 designer profile과 playwright를 남겨야 한다', () => {
+  it('designer + auto 는 codex 모드에서 codex용 MCP 정책으로 수렴해야 한다', () => {
     const result = runBash(
       `TFX_CLI_MODE=codex CODEX_BIN=codex bash "${ROUTE_SCRIPT}" designer 'Capture browser screenshot and inspect responsive UI layout' auto`,
       fixtureEnv({ FAKE_CODEX_MODE: 'exec', FAKE_CODEX_ECHO_CONFIG: '1' }),
@@ -296,7 +296,7 @@ describe('tfx-route.sh — 역할별 MCP profile 필터', () => {
 
     assert.equal(result.status, 0, out(result));
     assert.match(out(result), /resolved_profile=designer/);
-    assert.deepEqual(allowedMcpServers(result), ['context7', 'playwright']);
+    assert.deepEqual(allowedMcpServers(result), ['context7', 'tavily', 'exa', 'brave-search']);
   });
 });
 

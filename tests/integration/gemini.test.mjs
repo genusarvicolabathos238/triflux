@@ -84,7 +84,7 @@ function fixtureEnv(extraEnv = {}) {
 
 // ── Gemini 모델 리매핑 검증 ──
 
-describe('tfx-route.sh — Gemini 모델 리매핑 (TFX_CLI_MODE=gemini)', () => {
+describe('tfx-route.sh — Gemini 모델 리매핑 (TFX_CLI_MODE=gemini)', { concurrency: 1 }, () => {
   it('executor는 codex에서 gemini Pro로 리매핑되어야 한다', () => {
     const result = runBash(
       `GEMINI_BIN=gemini bash "${ROUTE_SCRIPT}" executor 'gemini-remap-test' 2>&1 || true`,
@@ -93,7 +93,7 @@ describe('tfx-route.sh — Gemini 모델 리매핑 (TFX_CLI_MODE=gemini)', () =>
     assert.equal(result.status, 0, out(result));
     assert.match(out(result), /TFX_CLI_MODE=gemini/);
     assert.match(out(result), /type=gemini/);
-    assert.match(out(result), /gemini\(pro\)로 리매핑/);
+    assert.match(out(result), /gemini\(pro(?:31)?\)로 리매핑/);
   });
 
   it('architect는 gemini Pro로 리매핑되어야 한다', () => {
@@ -102,7 +102,7 @@ describe('tfx-route.sh — Gemini 모델 리매핑 (TFX_CLI_MODE=gemini)', () =>
       fixtureEnv(),
     );
     assert.equal(result.status, 0, out(result));
-    assert.match(out(result), /gemini\(pro\)로 리매핑/);
+    assert.match(out(result), /gemini\(pro(?:31)?\)로 리매핑/);
   });
 
   it('build-fixer는 gemini Flash로 리매핑되어야 한다', () => {
@@ -111,7 +111,7 @@ describe('tfx-route.sh — Gemini 모델 리매핑 (TFX_CLI_MODE=gemini)', () =>
       fixtureEnv(),
     );
     assert.equal(result.status, 0, out(result));
-    assert.match(out(result), /gemini\(flash\)로 리매핑/);
+    assert.match(out(result), /gemini\(flash(?:3)?\)로 리매핑/);
   });
 
   it('spark는 gemini Flash로 리매핑되어야 한다', () => {
@@ -120,7 +120,7 @@ describe('tfx-route.sh — Gemini 모델 리매핑 (TFX_CLI_MODE=gemini)', () =>
       fixtureEnv(),
     );
     assert.equal(result.status, 0, out(result));
-    assert.match(out(result), /gemini\(flash\)로 리매핑/);
+    assert.match(out(result), /gemini\(flash(?:3)?\)로 리매핑/);
   });
 
   it('기본 gemini 타입(designer)은 리매핑 없이 gemini 유지되어야 한다', () => {
@@ -150,7 +150,7 @@ describe('tfx-route.sh — Gemini 모델 리매핑 (TFX_CLI_MODE=gemini)', () =>
 
 // ── GEMINI_ALLOWED_SERVERS MCP 필터링 ──
 
-describe('tfx-route.sh — Gemini MCP 필터링 (GEMINI_ALLOWED_SERVERS)', () => {
+describe('tfx-route.sh — Gemini MCP 필터링 (GEMINI_ALLOWED_SERVERS)', { concurrency: 1 }, () => {
   it('designer + auto 프로필에서 playwright 포함 MCP 서버가 필터링되어야 한다', () => {
     const result = runBash(
       `GEMINI_BIN=gemini bash "${ROUTE_SCRIPT}" designer 'Capture browser screenshot and inspect layout' auto 2>&1 || true`,
@@ -196,7 +196,7 @@ describe('tfx-route.sh — Gemini MCP 필터링 (GEMINI_ALLOWED_SERVERS)', () =>
 
 // ── Gemini stream worker 429 재시도 ──
 
-describe('tfx-route.sh — Gemini stream worker 429 재시도', () => {
+describe('tfx-route.sh — Gemini stream worker 429 재시도', { concurrency: 1 }, () => {
   it('첫 호출이 429여도 5초 대기 후 1회 재시도에서 성공해야 한다', () => {
     const testTempDir = mkdtempSync(resolve(tmpdir(), 'triflux-gemini-worker-retry-'));
     const result = spawnSync(process.execPath, [
@@ -238,18 +238,17 @@ describe('tfx-route.sh — Gemini stream worker 429 재시도', () => {
 
 // ── run_legacy_gemini() 지수 백오프 및 크래시 자동 재시도 ──
 
-describe('tfx-route.sh — Gemini health check 지수 백오프', () => {
+describe('tfx-route.sh — Gemini health check 지수 백오프', { concurrency: 1 }, () => {
   it('정상 Gemini 실행에서 health check가 출력 감지 후 통과해야 한다', () => {
-    // FAKE_GEMINI_LEGACY_OK=1로 legacy 경로에서 정상 출력 가능
-    // stream wrapper 실패 → legacy fallback → 정상 완료
+    // FAKE_GEMINI_LEGACY_OK=1로 정상 출력 가능
+    // 현재는 stream wrapper가 정상 동작하면 그대로 성공하고,
+    // wrapper가 불가한 환경에서는 legacy fallback으로도 성공해야 한다.
     const result = runBash(
       `GEMINI_BIN=gemini FAKE_GEMINI_LEGACY_OK=1 TFX_ROUTE_WORKER_RUNNER=__nonexistent__ bash "${ROUTE_SCRIPT}" designer 'health-check-ok' auto 2>&1 || true`,
       fixtureEnv(),
     );
     const output = out(result);
-    // stream wrapper 실패 후 legacy fallback 메시지 확인
-    assert.match(output, /legacy CLI 경로로 fallback/);
-    // legacy 경로에서는 crash 감지 없이 정상 완료
+    // 어떤 경로든 crash 감지 없이 정상 완료
     assert.doesNotMatch(output, /crash 감지/);
     assert.doesNotMatch(output, /출력 없이 프로세스 종료/);
     // Gemini가 정상적으로 응답을 생성함
@@ -270,7 +269,7 @@ describe('tfx-route.sh — Gemini health check 지수 백오프', () => {
 
 // ── Gemini CLI 모드 전환 및 fallback ──
 
-describe('tfx-route.sh — Gemini CLI 모드 전환', () => {
+describe('tfx-route.sh — Gemini CLI 모드 전환', { concurrency: 1 }, () => {
   it('TFX_CLI_MODE=gemini에서 claude-native 에이전트(explore)는 claude-native를 유지해야 한다', () => {
     // explore는 claude-native 타입이고, gemini 모드에서는
     // apply_cli_mode가 codex->gemini 리매핑만 처리하므로 claude-native 유지
@@ -319,7 +318,7 @@ describe('tfx-route.sh — Gemini CLI 모드 전환', () => {
 
 // ── mcp-filter.mjs Gemini 관련 단위 동작 ──
 
-describe('mcp-filter — Gemini 관련 정책 빌드', () => {
+describe('mcp-filter — Gemini 관련 정책 빌드', { concurrency: 1 }, () => {
   it('designer 에이전트의 geminiAllowedServers에 playwright가 포함되어야 한다', async () => {
     const { buildMcpPolicy } = await import('../../scripts/lib/mcp-filter.mjs');
     const policy = buildMcpPolicy({

@@ -369,6 +369,13 @@ function selectContextualServers(baseServers, profile, options = {}) {
   const selected = new Set(
     (profile.alwaysOnServers || []).filter((server) => baseServers.includes(server)),
   );
+  const wantsBrowserObservation = (
+    baseServers.includes('playwright')
+    && /(?:browser|screenshot|layout|responsive|visual|screen|page|ui|ux|regression|캡처|스크린샷|레이아웃|반응형|화면|브라우저)/iu.test(taskText)
+  );
+  if (wantsBrowserObservation) {
+    selected.add('playwright');
+  }
   const requestedSearchTool = typeof options.searchTool === 'string' ? options.searchTool : '';
 
   const rankedServers = rankServers(
@@ -477,7 +484,9 @@ export function resolveAllowedServers(options = {}) {
   const baseServers = availableServers.length
     ? profile.allowedServers.filter((server) => availableServers.includes(server))
     : [...profile.allowedServers];
-  const manifestFiltered = applyManifestFilter(baseServers);
+  const manifestFiltered = availableServers.length
+    ? baseServers
+    : applyManifestFilter(baseServers);
   return selectContextualServers(manifestFiltered, profile, { ...options, inventory, inventoryIndex });
 }
 
