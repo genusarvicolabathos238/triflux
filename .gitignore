@@ -21,6 +21,9 @@ docs/*
 # 리서치 (대외비 — 클론 레포, 분석 보고서, 설계문서)
 research/
 
+# 슬롭 분석 보고서
+slop-report.json
+
 # 프로젝트 인덱스 (세션별 자동 생성)
 PROJECT_INDEX.md
 PROJECT_INDEX.json

@@ -222,6 +222,21 @@ const SYNC_MAP = [
     label: "lib/mcp-server-catalog.mjs",
   },
   {
+    src: join(PLUGIN_ROOT, "scripts", "lib", "mcp-manifest.mjs"),
+    dst: join(CLAUDE_DIR, "scripts", "lib", "mcp-manifest.mjs"),
+    label: "lib/mcp-manifest.mjs",
+  },
+  {
+    src: join(PLUGIN_ROOT, "scripts", "lib", "hook-utils.mjs"),
+    dst: join(CLAUDE_DIR, "scripts", "lib", "hook-utils.mjs"),
+    label: "lib/hook-utils.mjs",
+  },
+  {
+    src: join(PLUGIN_ROOT, "scripts", "lib", "cross-review-utils.mjs"),
+    dst: join(CLAUDE_DIR, "scripts", "lib", "cross-review-utils.mjs"),
+    label: "lib/cross-review-utils.mjs",
+  },
+  {
     src: join(PLUGIN_ROOT, "scripts", "lib", "keyword-rules.mjs"),
     dst: join(CLAUDE_DIR, "scripts", "lib", "keyword-rules.mjs"),
     label: "lib/keyword-rules.mjs",

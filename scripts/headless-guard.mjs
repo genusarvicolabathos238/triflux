@@ -60,11 +60,13 @@ function writeMultiState(state) {
 }
 
 function isPsmuxInstalled() {
-  // 캐시 확인
+  // 캐시 확인 (미래 타임스탬프 오염 방어)
   try {
     if (existsSync(CACHE_FILE)) {
       const cache = JSON.parse(readFileSync(CACHE_FILE, "utf8"));
-      if (Date.now() - cache.ts < CACHE_TTL_MS) return cache.ok;
+      const age = Date.now() - cache.ts;
+      if (age >= 0 && age < CACHE_TTL_MS) return cache.ok;
+      // age < 0 → 미래 ts (오염) → 캐시 무시하고 재검사
     }
   } catch { /* cache miss */ }
 
