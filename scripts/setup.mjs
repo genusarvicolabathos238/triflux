@@ -11,6 +11,7 @@ import { spawn, execFileSync } from "child_process";
 import { fileURLToPath } from "url";
 import { cleanupTmpFiles } from "./tmp-cleanup.mjs";
 import { buildAll as buildCacheWarmup } from "./cache-warmup.mjs";
+import { ensureGeminiProfiles } from "./lib/gemini-profiles.mjs";
 
 const PLUGIN_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const CLAUDE_DIR = join(homedir(), ".claude");
@@ -221,6 +222,11 @@ const SYNC_MAP = [
     label: "lib/keyword-rules.mjs",
   },
   {
+    src: join(PLUGIN_ROOT, "scripts", "lib", "gemini-profiles.mjs"),
+    dst: join(CLAUDE_DIR, "scripts", "lib", "gemini-profiles.mjs"),
+    label: "lib/gemini-profiles.mjs",
+  },
+  {
     src: join(PLUGIN_ROOT, "hub", "team", "agent-map.json"),
     dst: join(CLAUDE_DIR, "hub", "team", "agent-map.json"),
     label: "hub/team/agent-map.json",
@@ -326,56 +332,6 @@ function ensureCodexProfiles() {
     }
 
     return changed;
-  } catch {
-    return 0;
-  }
-}
-
-const GEMINI_DIR = join(homedir(), ".gemini");
-const GEMINI_PROFILES_PATH = join(GEMINI_DIR, "triflux-profiles.json");
-
-const DEFAULT_GEMINI_PROFILES = {
-  model: "gemini-3.1-pro-preview",
-  profiles: {
-    pro31:   { model: "gemini-3.1-pro-preview",   hint: "3.1 Pro — 플래그십 (1M ctx, 멀티모달)" },
-    flash3:  { model: "gemini-3-flash-preview",   hint: "3.0 Flash — 빠른 응답, 비용 효율" },
-    pro25:   { model: "gemini-2.5-pro",           hint: "2.5 Pro — 안정 (추론 강화)" },
-    flash25: { model: "gemini-2.5-flash",         hint: "2.5 Flash — 경량 범용" },
-    lite25:  { model: "gemini-2.5-flash-lite",    hint: "2.5 Flash Lite — 최경량" },
-  },
-};
-
-function ensureGeminiProfiles() {
-  try {
-    if (!existsSync(GEMINI_DIR)) mkdirSync(GEMINI_DIR, { recursive: true });
-
-    if (!existsSync(GEMINI_PROFILES_PATH)) {
-      writeFileSync(GEMINI_PROFILES_PATH, JSON.stringify(DEFAULT_GEMINI_PROFILES, null, 2) + "\n", "utf8");
-      return Object.keys(DEFAULT_GEMINI_PROFILES.profiles).length;
-    }
-
-    let cfg;
-    try {
-      cfg = JSON.parse(readFileSync(GEMINI_PROFILES_PATH, "utf8"));
-    } catch {
-      writeFileSync(GEMINI_PROFILES_PATH, JSON.stringify(DEFAULT_GEMINI_PROFILES, null, 2) + "\n", "utf8");
-      return Object.keys(DEFAULT_GEMINI_PROFILES.profiles).length;
-    }
-
-    if (!cfg.profiles) cfg.profiles = {};
-    let added = 0;
-    for (const [name, value] of Object.entries(DEFAULT_GEMINI_PROFILES.profiles)) {
-      if (!cfg.profiles[name]) {
-        cfg.profiles[name] = value;
-        added++;
-      }
-    }
-    if (!cfg.model) cfg.model = DEFAULT_GEMINI_PROFILES.model;
-
-    if (added > 0) {
-      writeFileSync(GEMINI_PROFILES_PATH, JSON.stringify(cfg, null, 2) + "\n", "utf8");
-    }
-    return added;
   } catch {
     return 0;
   }
@@ -865,7 +821,7 @@ if (codexProfilesAdded > 0) {
 
 // ── Gemini 프로필 자동 보정 ──
 
-const geminiProfilesAdded = ensureGeminiProfiles();
+const geminiProfilesAdded = ensureGeminiProfiles().added;
 if (geminiProfilesAdded > 0) {
   synced++;
 }

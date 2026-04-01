@@ -11,28 +11,16 @@ import { detectMultiplexer, getSessionAttachedCount, killSession, listSessions, 
 import { forceCleanupTeam } from "../hub/team/nativeProxy.mjs";
 import { cleanupStaleOmcTeams, inspectStaleOmcTeams } from "../hub/team/staleState.mjs";
 import { getPipelineStateDbPath } from "../hub/pipeline/state.mjs";
+import { ensureGeminiProfiles } from "../scripts/lib/gemini-profiles.mjs";
 
 const PKG_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const CLAUDE_DIR = join(homedir(), ".claude");
 const CODEX_DIR = join(homedir(), ".codex");
 const CODEX_CONFIG_PATH = join(CODEX_DIR, "config.toml");
-const GEMINI_DIR = join(homedir(), ".gemini");
-const GEMINI_PROFILES_PATH = join(GEMINI_DIR, "triflux-profiles.json");
 const PKG = JSON.parse(readFileSync(join(PKG_ROOT, "package.json"), "utf8"));
 
 // 이 배열에 포함된 버전에서만 star prompt를 표시한다 (빈 배열 = 모든 버전에서 표시)
 const STAR_PROMPT_VERSIONS = ["9.2.0"];
-
-const DEFAULT_GEMINI_PROFILES = {
-  model: "gemini-3.1-pro-preview",
-  profiles: {
-    pro31:   { model: "gemini-3.1-pro-preview",   hint: "3.1 Pro — 플래그십 (1M ctx, 멀티모달)" },
-    flash3:  { model: "gemini-3-flash-preview",   hint: "3.0 Flash — 빠른 응답, 비용 효율" },
-    pro25:   { model: "gemini-2.5-pro",           hint: "2.5 Pro — 안정 (추론 강화)" },
-    flash25: { model: "gemini-2.5-flash",         hint: "2.5 Flash — 경량 범용" },
-    lite25:  { model: "gemini-2.5-flash-lite",    hint: "2.5 Flash Lite — 최경량" },
-  },
-};
 
 const REQUIRED_CODEX_PROFILES = [
   {
@@ -512,44 +500,6 @@ function previewCodexProfiles() {
   };
 }
 
-function ensureGeminiProfiles() {
-  try {
-    if (!existsSync(GEMINI_DIR)) mkdirSync(GEMINI_DIR, { recursive: true });
-
-    if (!existsSync(GEMINI_PROFILES_PATH)) {
-      writeFileSync(GEMINI_PROFILES_PATH, JSON.stringify(DEFAULT_GEMINI_PROFILES, null, 2) + "\n", "utf8");
-      return { ok: true, created: true, count: Object.keys(DEFAULT_GEMINI_PROFILES.profiles).length };
-    }
-
-    let cfg;
-    try {
-      cfg = JSON.parse(readFileSync(GEMINI_PROFILES_PATH, "utf8"));
-    } catch {
-      // 파싱 실패 → 재생성
-      writeFileSync(GEMINI_PROFILES_PATH, JSON.stringify(DEFAULT_GEMINI_PROFILES, null, 2) + "\n", "utf8");
-      return { ok: true, created: true, count: Object.keys(DEFAULT_GEMINI_PROFILES.profiles).length };
-    }
-
-    if (!cfg.profiles) cfg.profiles = {};
-    let added = 0;
-    for (const [name, value] of Object.entries(DEFAULT_GEMINI_PROFILES.profiles)) {
-      if (!cfg.profiles[name]) {
-        cfg.profiles[name] = value;
-        added++;
-      }
-    }
-    if (!cfg.model) cfg.model = DEFAULT_GEMINI_PROFILES.model;
-
-    if (added > 0) {
-      writeFileSync(GEMINI_PROFILES_PATH, JSON.stringify(cfg, null, 2) + "\n", "utf8");
-    }
-
-    return { ok: true, created: false, added, count: Object.keys(cfg.profiles).length };
-  } catch (e) {
-    return { ok: false, message: e.message };
-  }
-}
-
 function syncFile(src, dst, label) {
   const dstDir = dirname(dst);
   if (!existsSync(dstDir)) mkdirSync(dstDir, { recursive: true });
@@ -715,6 +665,11 @@ function getSetupSyncTargets() {
       src: join(PKG_ROOT, "scripts", "lib", "keyword-rules.mjs"),
       dst: join(CLAUDE_DIR, "scripts", "lib", "keyword-rules.mjs"),
       label: "lib/keyword-rules.mjs",
+    },
+    {
+      src: join(PKG_ROOT, "scripts", "lib", "gemini-profiles.mjs"),
+      dst: join(CLAUDE_DIR, "scripts", "lib", "gemini-profiles.mjs"),
+      label: "lib/gemini-profiles.mjs",
     },
     {
       src: join(PKG_ROOT, "scripts", "tfx-route-worker.mjs"),

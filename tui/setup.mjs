@@ -11,6 +11,7 @@ import {
   RESET, DIM, BOLD, CYAN, AMBER, GREEN, RED, YELLOW, WHITE, GRAY,
   onExit, showCursor,
 } from "./core.mjs";
+import { DEFAULT_GEMINI_PROFILES } from "../scripts/lib/gemini-profiles.mjs";
 
 const PKG_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const CLAUDE_DIR = join(homedir(), ".claude");
@@ -101,20 +102,13 @@ function stepProfiles() {
 function stepGeminiProfiles() {
   const configPath = join(GEMINI_DIR, "triflux-profiles.json");
   if (!existsSync(configPath)) {
-    // 기본 프로필 자동 생성
-    const defaultConfig = {
-      model: "gemini-3.1-pro-preview",
-      profiles: {
-        pro31:   { model: "gemini-3.1-pro-preview",   hint: "3.1 Pro — 플래그십 (1M ctx, 멀티모달)" },
-        flash3:  { model: "gemini-3-flash-preview",   hint: "3.0 Flash — 빠른 응답, 비용 효율" },
-        pro25:   { model: "gemini-2.5-pro",           hint: "2.5 Pro — 안정 (추론 강화)" },
-        flash25: { model: "gemini-2.5-flash",         hint: "2.5 Flash — 경량 범용" },
-        lite25:  { model: "gemini-2.5-flash-lite",    hint: "2.5 Flash Lite — 최경량" },
-      },
-    };
     if (!existsSync(GEMINI_DIR)) mkdirSync(GEMINI_DIR, { recursive: true });
-    writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2) + "\n", "utf8");
-    return { ok: true, detail: "기본 프로필 5개 자동 생성됨", action: "created" };
+    writeFileSync(configPath, JSON.stringify(DEFAULT_GEMINI_PROFILES, null, 2) + "\n", "utf8");
+    return {
+      ok: true,
+      detail: `기본 프로필 ${Object.keys(DEFAULT_GEMINI_PROFILES.profiles).length}개 자동 생성됨`,
+      action: "created",
+    };
   }
 
   try {
@@ -361,7 +355,7 @@ async function starRequest() {
     return;
   }
 
-  if (await confirm(`${AMBER}⭐${RESET} 하나가 큰 차이를 만듭니다.`, true)) {
+  if (await confirm(`${AMBER}⭐${RESET} 하나가 큰 차이를 만듭니다.`, false)) {
     try {
       execFileSync("gh", ["api", "-X", "PUT", "/user/starred/tellang/triflux"], {
         timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
@@ -379,7 +373,7 @@ async function starRequest() {
 // ── Main Menu ──
 
 const MENU = [
-  { label: "전체 설정 (Full Setup)",   hint: "5단계 순서 실행" },
+  { label: "전체 설정 (Full Setup)",   hint: "6단계 순서 실행" },
   { label: "단계별 선택 (Selective)",   hint: "특정 단계만 실행" },
   { label: "현재 상태 확인 (Status)",   hint: "설정 없이 진단만" },
   { label: "종료",                      hint: "Ctrl+C" },
