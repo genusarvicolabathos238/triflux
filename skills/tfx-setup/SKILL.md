@@ -11,7 +11,10 @@ argument-hint: "[doctor]"
 
 # tfx-setup — triflux 초기 설정 위저드
 
-> 설치 후 최초 1회 실행 권장. HUD 설정, CLI 확인, 전체 진단을 수행합니다.
+> 설치 후 최초 1회 + **매 업데이트 후** 실행 권장.
+> `tfx update` 완료 후에도 이 스킬의 단계 1.5(훅 등록 확인)를 반드시 실행하여
+> 신규/변경된 훅이 settings.json에 반영되도록 한다.
+> 훅 우선순위 관리는 `tfx-hooks` 스킬의 오케스트레이터 패턴을 따른다.
 
 ## 워크플로우
 
@@ -42,6 +45,19 @@ Bash("triflux setup")
 ```
 
 스크립트/HUD/스킬을 `~/.claude/`에 배포. 결과 표시.
+
+#### 단계 1.5: 훅 등록 확인
+
+`~/.claude/settings.json`을 Read 도구로 읽어 필수 훅이 등록되어 있는지 확인한다.
+
+필수 훅 목록:
+| 이벤트 | matcher | 스크립트 | 역할 |
+|--------|---------|---------|------|
+| PreToolUse | Bash\|Agent | headless-guard-fast.sh | Codex/Gemini 직접 호출 차단 |
+| PreToolUse | Bash | psmux-safety-guard.mjs | psmux kill-session 직접 호출 차단 (WT 프리징 방지) |
+| PreToolUse | Skill | tfx-gate-activate.mjs | tfx-multi 게이트 |
+
+누락된 훅이 있으면 update-config 스킬로 등록한다. 이미 있으면 ✅ 표시.
 
 #### 단계 2: HUD 설정
 

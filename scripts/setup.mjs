@@ -232,6 +232,11 @@ const SYNC_MAP = [
     label: "lib/hook-utils.mjs",
   },
   {
+    src: join(PLUGIN_ROOT, "scripts", "psmux-safety-guard.mjs"),
+    dst: join(CLAUDE_DIR, "scripts", "psmux-safety-guard.mjs"),
+    label: "psmux-safety-guard.mjs",
+  },
+  {
     src: join(PLUGIN_ROOT, "scripts", "lib", "cross-review-utils.mjs"),
     dst: join(CLAUDE_DIR, "scripts", "lib", "cross-review-utils.mjs"),
     label: "lib/cross-review-utils.mjs",
