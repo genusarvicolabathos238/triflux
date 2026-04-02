@@ -171,7 +171,7 @@ function apply() {
 
   // 오케스트레이터 명령 생성
   const nodeExe = getNodeExe();
-  const orchestratorPath = "${CLAUDE_PLUGIN_ROOT}/hooks/hook-orchestrator.mjs";
+  const orchestratorPath = join(PLUGIN_ROOT, "hooks", "hook-orchestrator.mjs");
   const orchestratorCmd = `"${nodeExe}" "${orchestratorPath}"`;
 
   // 모든 이벤트를 하나의 오케스트레이터로 통합
