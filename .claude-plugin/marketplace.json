@@ -13,7 +13,10 @@
       "author": {
         "name": "tellang"
       },
-      "source": "./",
+      "source": {
+        "source": "npm",
+        "package": "triflux"
+      },
       "category": "productivity",
       "homepage": "https://github.com/tellang/triflux",
       "tags": [
