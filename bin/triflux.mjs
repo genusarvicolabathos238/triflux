@@ -2386,6 +2386,24 @@ function cmdUpdate() {
     console.log(`\n${CYAN}── 설정 동기화 ──${RESET}`);
     cmdSetup({ fromUpdate: true });
 
+    // hook-orchestrator apply — settings.json 훅 경로를 올바른 절대경로로 갱신
+    try {
+      const hookMgrPath = join(PKG_ROOT, "hooks", "hook-manager.mjs");
+      if (existsSync(hookMgrPath)) {
+        const result = execSync(`node "${hookMgrPath}" apply`, {
+          encoding: "utf8",
+          timeout: 10000,
+          windowsHide: true,
+        }).trim();
+        const parsed = JSON.parse(result);
+        if (parsed?.status === "applied") {
+          ok(`훅 오케스트레이터 적용 (${parsed.events?.length || 0}개 이벤트)`);
+        }
+      }
+    } catch {
+      // apply 실패 시 무시 — ensureHooksInSettings이 개별 훅을 이미 등록함
+    }
+
     if (stoppedHubInfo) {
       if (startHubAfterUpdate(stoppedHubInfo)) ok("hub 재기동 완료");
       else warn("hub 재기동 실패 — `tfx hub start`로 수동 시작 필요");
