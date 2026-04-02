@@ -14,10 +14,12 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { readPreflightCache } from "./preflight-cache.mjs";
-import { checkCli, checkHub, detectCodexPlan } from "./lib/env-probe.mjs";
+import { checkCli, checkHub, detectCodexAuthState } from "./lib/env-probe.mjs";
 import { SEARCH_SERVER_ORDER, MCP_SERVER_DOMAIN_TAGS } from "./lib/mcp-server-catalog.mjs";
 
 export const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
+const WARMUP_METADATA_FILE = ["state", "warmup-metadata.json"];
+const AUTH_SENSITIVE_TARGETS = new Set(["codexSkills", "tierEnvironment", "searchEngines"]);
 
 export const CACHE_TARGETS = Object.freeze({
   codexSkills: Object.freeze({
@@ -81,6 +83,21 @@ export function resolveTargetPath(target, { cwd = process.cwd() } = {}) {
 
   const { omcDir } = resolveRootDirs(cwd);
   return join(omcDir, ...spec.file);
+}
+
+function resolveWarmupMetadataPath({ cwd = process.cwd() } = {}) {
+  const { omcDir } = resolveRootDirs(cwd);
+  return join(omcDir, ...WARMUP_METADATA_FILE);
+}
+
+function readWarmupMetadata(options = {}) {
+  const metadataPath = resolveWarmupMetadataPath(options);
+  if (!existsSync(metadataPath)) return null;
+  try {
+    return JSON.parse(readFileSync(metadataPath, "utf8"));
+  } catch {
+    return null;
+  }
 }
 
 function resolveTtlMs(target, options = {}) {
@@ -188,6 +205,7 @@ export function probeTierEnvironment(options = {}) {
   const homeDir = resolveHomeDir(options.homeDir);
   const preflight = options.preflight ?? readPreflightCache();
   const execSyncFn = options.execSyncFn || execSync;
+  const codexAuth = preflight?.codex_plan ?? detectCodexAuthState({ homeDir });
 
   const codexCheck = preflight?.codex || checkCli("codex", { execSyncFn });
   const geminiCheck = preflight?.gemini || checkCli("gemini", { execSyncFn });
@@ -198,8 +216,6 @@ export function probeTierEnvironment(options = {}) {
     pollAttempts: options.hubRestart === true ? 8 : 0,
     execSyncFn,
   });
-  const codexPlan = preflight?.codex_plan || detectCodexPlan({ homeDir });
-
   const checks = {
     psmux: false,
     hub: !!hubCheck?.ok,
@@ -241,13 +257,30 @@ export function probeTierEnvironment(options = {}) {
     tier,
     checks,
     available_agents: agents,
-    codex_plan: codexPlan,
+    codex_plan: codexAuth.source == null
+      ? { plan: codexAuth.plan }
+      : { plan: codexAuth.plan, source: codexAuth.source },
     source: {
       preflight: !!preflight,
       home_dir: homeDir,
       hub_state: hubCheck?.state || "unknown",
     },
   };
+}
+
+function getCodexAuthFingerprint(options = {}) {
+  if (typeof options.preflight?.codex_plan?.fingerprint === "string") {
+    return options.preflight.codex_plan.fingerprint;
+  }
+  return detectCodexAuthState({ homeDir: resolveHomeDir(options.homeDir) }).fingerprint;
+}
+
+function hasAuthFingerprintChanged(target, options = {}) {
+  if (!AUTH_SENSITIVE_TARGETS.has(target)) return false;
+  const nextFingerprint = getCodexAuthFingerprint(options);
+  const previousFingerprint = readWarmupMetadata(options)?.codex_auth_fingerprint || null;
+  if (previousFingerprint === null) return false;
+  return previousFingerprint !== nextFingerprint;
 }
 
 export function extractProjectMeta(options = {}) {
@@ -422,7 +455,7 @@ export function checkSearchEngines(options = {}) {
 
 function buildTarget(target, options = {}) {
   const filePath = resolveTargetPath(target, options);
-  if (!options.force && isFresh(target, options)) {
+  if (!options.force && isFresh(target, options) && !hasAuthFingerprintChanged(target, options)) {
     return { target, status: "skipped", file: filePath, reason: "fresh" };
   }
 
@@ -476,6 +509,15 @@ export function buildAll(options = {}) {
   const built = results.filter((result) => result.status === "built").length;
   const skipped = results.filter((result) => result.status === "skipped").length;
   const failed = results.filter((result) => result.status === "failed").length;
+  const authFingerprint = getCodexAuthFingerprint(options);
+
+  if (failed === 0) {
+    writeJSON(resolveWarmupMetadataPath(options), {
+      updated_at: new Date(options.now ?? Date.now()).toISOString(),
+      codex_auth_fingerprint: authFingerprint,
+      targets,
+    });
+  }
 
   return {
     ok: failed === 0,
