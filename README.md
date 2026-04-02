@@ -319,6 +319,8 @@ tfx setup
 /tfx-multi "refactor auth + update UI + add tests"
 ```
 > **Note**: Deep skills (`/tfx-deep-*`, `/tfx-persist`, `/tfx-ralph`) require **psmux** (or tmux), **triflux Hub**, **Codex CLI**, and **Gemini CLI** for full Tri-CLI consensus (Tier 1). Without these prerequisites, skills automatically degrade to Tier 3 (Claude-only, single-model) mode. Run `tfx doctor` to check your environment.
+>
+> **Serena note**: Serena MCP is stateful. Share one Serena instance only across agents working on the **same project**. For parallel work across different projects, prefer separate Serena instances. If Serena reports `No active project`, check your Codex Serena config for `--project-from-cwd` (or `--project <path>`) and rerun `tfx doctor`.
 
 ---
 

@@ -319,6 +319,8 @@ tfx setup
 /tfx-multi "refactor auth + update UI + add tests"
 ```
 > **참고**: Deep 스킬(`/tfx-deep-*`, `/tfx-persist`, `/tfx-ralph`)은 완전한 Tri-CLI 합의(Tier 1)를 위해 **psmux**(또는 tmux), **triflux Hub**, **Codex CLI**, **Gemini CLI**가 필요합니다. 전제조건이 충족되지 않으면 Tier 3(Claude 단독, single-model) 모드로 자동 전환됩니다. `tfx doctor`로 환경을 확인하세요.
+>
+> **Serena 참고**: Serena MCP는 stateful합니다. 따라서 **같은 프로젝트**를 다루는 에이전트끼리만 하나의 Serena 인스턴스를 공유하는 것이 안전합니다. 서로 다른 프로젝트를 병렬로 작업할 때는 Serena 인스턴스를 분리하세요. Serena가 `No active project`를 보고하면 Codex Serena 설정의 `--project-from-cwd`(또는 `--project <path>`)를 확인하고 `tfx doctor`를 다시 실행하세요.
 
 ---
 

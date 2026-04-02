@@ -1004,6 +1004,48 @@ function getOptionValue(args, optionName) {
   return args[index + 1] ?? null;
 }
 
+function extractTomlSection(content, sectionName) {
+  const lines = String(content ?? "").split(/\r?\n/);
+  const header = `[${sectionName}]`;
+  const start = lines.findIndex((line) => line.trim() === header);
+  if (start === -1) return "";
+  const collected = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*\[.+\]\s*$/.test(line)) break;
+    collected.push(line);
+  }
+  return collected.join("\n");
+}
+
+function inspectSerenaMcpConfig(configContent) {
+  const section = extractTomlSection(configContent, "mcp_servers.serena");
+  if (!section.trim()) {
+    return {
+      present: false,
+      hasProjectBinding: false,
+      hasContextCodex: false,
+      startupTimeoutSec: null,
+      timeoutRecommended: false,
+    };
+  }
+
+  const hasProjectBinding = section.includes("--project-from-cwd")
+    || /--project(?:\s|=|")/.test(section);
+  const hasContextCodex = /--context(?:\s|",\s*")?codex/i.test(section) || /"codex"/i.test(section);
+  const timeoutMatch = section.match(/startup_timeout_sec\s*=\s*([0-9.]+)/i);
+  const startupTimeoutSec = timeoutMatch ? Number(timeoutMatch[1]) : null;
+  const timeoutRecommended = startupTimeoutSec !== null && startupTimeoutSec >= 30;
+
+  return {
+    present: true,
+    hasProjectBinding,
+    hasContextCodex,
+    startupTimeoutSec,
+    timeoutRecommended,
+  };
+}
+
 function statusBadge(status) {
   switch (status) {
     case "present":
@@ -1346,6 +1388,69 @@ async function cmdDoctor(options = {}) {
         addDoctorCheck(report, { name: "codex-legacy-models", status: "issues", models: legacyFound, fix: "tfx setup" });
         issues++;
       }
+    }
+
+    // 4.5 Serena MCP
+    section("Serena MCP");
+    if (existsSync(CODEX_CONFIG_PATH)) {
+      const codexConfig = readFileSync(CODEX_CONFIG_PATH, "utf8");
+      const serenaConfig = inspectSerenaMcpConfig(codexConfig);
+      if (!serenaConfig.present) {
+        warn("serena MCP 설정 없음");
+        info("권장: [mcp_servers.serena]에 --project-from-cwd, --context codex, startup_timeout_sec=30+ 설정");
+        addDoctorCheck(report, {
+          name: "serena-mcp",
+          status: "missing",
+          path: CODEX_CONFIG_PATH,
+          fix: "Codex config에 Serena MCP 설정을 추가하세요.",
+        });
+        issues++;
+      } else {
+        const hasSerenaIssues = !serenaConfig.hasProjectBinding || !serenaConfig.timeoutRecommended;
+
+        if (serenaConfig.hasProjectBinding) ok("project binding: 정상");
+        else {
+          warn("project binding 없음");
+          info("권장: --project-from-cwd 또는 --project <path>");
+          issues++;
+        }
+
+        if (serenaConfig.hasContextCodex) info("context codex: 설정됨");
+        else info("context codex: 미설정");
+
+        if (serenaConfig.startupTimeoutSec === null) {
+          warn("startup_timeout_sec 미설정");
+          info("권장: startup_timeout_sec = 30 이상");
+          issues++;
+        } else if (serenaConfig.timeoutRecommended) {
+          ok(`startup timeout: ${serenaConfig.startupTimeoutSec}s`);
+        } else {
+          warn(`startup timeout 낮음: ${serenaConfig.startupTimeoutSec}s`);
+          info("권장: startup_timeout_sec = 30 이상");
+          issues++;
+        }
+
+        addDoctorCheck(report, {
+          name: "serena-mcp",
+          status: hasSerenaIssues ? "issues" : "ok",
+          path: CODEX_CONFIG_PATH,
+          project_binding: serenaConfig.hasProjectBinding,
+          context_codex: serenaConfig.hasContextCodex,
+          startup_timeout_sec: serenaConfig.startupTimeoutSec,
+          ...(hasSerenaIssues
+            ? { fix: "Serena MCP에 --project-from-cwd 와 startup_timeout_sec=30+ 를 설정하세요." }
+            : {}),
+        });
+      }
+    } else {
+      addDoctorCheck(report, {
+        name: "serena-mcp",
+        status: "missing",
+        path: CODEX_CONFIG_PATH,
+        fix: "Codex config를 생성하고 Serena MCP 설정을 추가하세요.",
+      });
+      warn("config.toml 미존재 — Serena MCP 진단 건너뜀");
+      issues++;
     }
 
     // 5. Gemini CLI
