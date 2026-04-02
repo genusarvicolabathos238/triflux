@@ -92,6 +92,18 @@
 RULE 5(WT 프리징 방지)를 위반하면 WT 전체가 응답 불능이 되어 모든 탭이 유실된다.
 핵심: exit → sleep 2 → kill 순서. 바로 kill 절대 금지.
 
+## Codex config.toml 충돌 방지
+
+`~/.codex/config.toml`에 `sandbox`, `approval_mode` 등이 이미 설정된 경우 CLI 플래그(`--full-auto`, `--sandbox`)를 중복 지정하면 Codex가 에러를 던진다.
+
+| config.toml에 있으면 | CLI에서 금지 |
+|---------------------|------------|
+| `sandbox = "elevated"` | `--full-auto` (sandbox를 재설정하려 함) |
+| `approval_mode = "full-auto"` | `--full-auto` |
+| `model = "gpt-5.3-codex"` | `-c 'model="..."'` |
+
+**안전 패턴:** config.toml에 기본값을 두고, CLI에서는 `--profile` 선택만 한다. 런처 스크립트·tfx-route.sh에서 `--full-auto`를 추가하기 전에 반드시 config.toml을 확인하라.
+
 ## 교차 검증 규칙
 
 * Claude 작성 코드 → Codex 리뷰
