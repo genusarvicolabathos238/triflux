@@ -22,7 +22,7 @@ export class CodexBackend {
     const cwdFlag = opts.cwd ? ` --cwd '${opts.cwd}'` : "";
     // Codex 0.117.0+: config.toml에 sandbox 설정이 있으면 CLI 플래그 중복 불가
     // --dangerously-bypass-approvals-and-sandbox 대신 exec 서브커맨드만 사용 (config가 sandbox 관리)
-    return `codex exec ${prompt} --output-last-message '${resultFile}' --color never${modelFlag}${cwdFlag}`;
+    return `codex exec ${prompt} --output-last-message '${resultFile}' --color never --skip-git-repo-check${modelFlag}${cwdFlag}`;
   }
 
   env() { return {}; }
