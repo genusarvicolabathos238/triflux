@@ -1,4 +1,4 @@
-import { altScreenOff, altScreenOn, BG, bold, box, clearScreen, color, cursorHide, cursorHome, cursorShow, dim, FG, MOCHA, padRight, progressBar, statusBadge, stripAnsi, truncate, wcswidth } from "./ansi.mjs";
+import { altScreenOff, altScreenOn, BG, bold, box, clearScreen, clearToEnd, color, cursorHide, cursorHome, cursorShow, dim, eraseBelow, FG, MOCHA, padRight, progressBar, statusBadge, stripAnsi, truncate, wcswidth } from "./ansi.mjs";
 
 const FALLBACK_COLUMNS = 100, FALLBACK_ROWS = 24;
 const VALID_TABS = new Set(["log", "detail", "files"]);
@@ -335,8 +335,11 @@ export function createLiteDashboard(opts = {}) {
     attachInput();
     frameCount++;
     const rowsOut = buildRows();
-    if (isTTY) write(cursorHome + clearScreen + rowsOut.join("\n"));
-    else write(`${rowsOut.join("\n")}\n`);
+    if (isTTY) {
+      const width = viewportColumns();
+      const padded = rowsOut.map((line) => padRight(String(line ?? ""), width) + clearToEnd);
+      write(cursorHome + padded.join("\n") + eraseBelow);
+    } else write(`${rowsOut.join("\n")}\n`);
   }
 
   function close() {

@@ -22,6 +22,7 @@ export function moveDown(n = 1)  { return `${ESC}[${n}B`; }
 // ── 줄 제어 ──
 export const clearLine    = `${ESC}[2K`;
 export const clearToEnd   = `${ESC}[K`;
+export const eraseBelow   = `${ESC}[J`;
 
 // ── 색상 (triflux 디자인 시스템) ──
 export const RESET = `${ESC}[0m`;
