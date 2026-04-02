@@ -106,11 +106,22 @@
         "description": "triflux 환경 초기화"
       },
       {
+        "id": "tfx-mcp-safety-guard",
+        "source": "triflux",
+        "matcher": "*",
+        "command": "node \"${PLUGIN_ROOT}/scripts/mcp-safety-guard.mjs\"",
+        "priority": 1,
+        "enabled": true,
+        "timeout": 3,
+        "blocking": false,
+        "description": "Gemini stdio MCP 자동 감지 + 제거 (spawn EPERM 방지)"
+      },
+      {
         "id": "tfx-hub-ensure",
         "source": "triflux",
         "matcher": "*",
         "command": "node \"${PLUGIN_ROOT}/scripts/hub-ensure.mjs\"",
-        "priority": 1,
+        "priority": 2,
         "enabled": true,
         "timeout": 8,
         "blocking": false,
@@ -121,7 +132,7 @@
         "source": "triflux",
         "matcher": "*",
         "command": "node \"${PLUGIN_ROOT}/scripts/preflight-cache.mjs\"",
-        "priority": 2,
+        "priority": 3,
         "enabled": true,
         "timeout": 5,
         "blocking": false,
