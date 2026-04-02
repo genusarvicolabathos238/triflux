@@ -132,6 +132,15 @@ Bash("triflux setup")
 
 #### 단계 4: CLI 진단
 
+`triflux doctor --json`에는 psmux 설치 여부뿐 아니라 **버전/capability preflight**도 포함된다.
+특히 Windows에서는 아래 capability가 모두 있어야 headless 멀티모델 오케스트레이션을 안전하게 쓸 수 있다:
+
+- `new-session`
+- `attach-session`
+- `kill-session`
+- `capture-pane`
+- `detach-client` 지원 여부도 함께 확인 (attach/detach hardening 참고)
+
 `triflux doctor --json`을 Bash로 실행하여 CLI 존재 여부 확인.
 결과를 테이블로 표시.
 

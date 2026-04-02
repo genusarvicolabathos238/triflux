@@ -12,6 +12,7 @@ import { forceCleanupTeam } from "../hub/team/nativeProxy.mjs";
 import { cleanupStaleOmcTeams, inspectStaleOmcTeams } from "../hub/team/staleState.mjs";
 import { getPipelineStateDbPath } from "../hub/pipeline/state.mjs";
 import { ensureGeminiProfiles } from "../scripts/lib/gemini-profiles.mjs";
+import { probePsmuxSupport, formatPsmuxInstallGuidance, formatPsmuxUpdateGuidance } from "../scripts/lib/psmux-info.mjs";
 import {
   addRegistryServer,
   inspectRegistry,
@@ -1394,6 +1395,29 @@ async function cmdDoctor(options = {}) {
       const psmuxPath = which("psmux");
       if (psmuxPath) {
         ok("설치됨");
+        const psmuxSupport = probePsmuxSupport({ execFileSyncFn: execFileSync });
+        const supportOk = psmuxSupport.ok;
+        info(`버전: ${psmuxSupport.version || "unknown"}`);
+        if (!supportOk) {
+          warn(`capability 부족: ${psmuxSupport.missingCommands.join(", ")}`);
+          info(`업데이트 권장:\n${formatPsmuxUpdateGuidance("  ")}`);
+          addDoctorCheck(report, {
+            name: "psmux",
+            status: "issues",
+            path: psmuxPath,
+            version: psmuxSupport.version || "unknown",
+            missing_commands: psmuxSupport.missingCommands,
+            fix: "tfx setup 또는 psmux 업그레이드",
+          });
+          issues++;
+        } else if (!psmuxSupport.recommended) {
+          warn(`권장 버전 미만: v${psmuxSupport.version || "unknown"} (권장: v${psmuxSupport.recommendedVersion}+)`);
+          info(`업데이트 권장:\n${formatPsmuxUpdateGuidance("  ")}`);
+        }
+        if (psmuxSupport.missingOptionalCommands?.length > 0) {
+          info(`선택 capability 미지원: ${psmuxSupport.missingOptionalCommands.join(", ")} (detach-first hardening 경로에서만 사용)`);
+        }
+
         // 기본 셸 확인: psmux 세션의 기본 셸이 PowerShell인지 cmd.exe인지
         let shellOk = false;
         try {
@@ -1403,7 +1427,7 @@ async function cmdDoctor(options = {}) {
           // show-options 실패 시 pwsh/powershell 존재 여부로 판단
           shellOk = !!which("pwsh") || !!which("powershell.exe");
         }
-        if (shellOk) {
+        if (supportOk && shellOk) {
           ok("기본 셸: PowerShell");
           addDoctorCheck(report, { name: "psmux", status: "ok", path: psmuxPath, shell: "powershell" });
         } else {
@@ -1429,7 +1453,7 @@ async function cmdDoctor(options = {}) {
         }
       } else {
         info(`미설치 ${GRAY}(선택 — 멀티모델 병렬 실행에 필요)${RESET}`);
-        info(`설치: winget install marlocarlo.psmux`);
+        info(`설치 방법:\n${formatPsmuxInstallGuidance("  ")}`);
         addDoctorCheck(report, { name: "psmux", status: "skipped", detail: "미설치 (선택)", fix: "winget install marlocarlo.psmux" });
       }
     }
