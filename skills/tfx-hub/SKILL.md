@@ -91,7 +91,9 @@ Bash("curl -s http://127.0.0.1:27888/status 2>/dev/null || echo '{\"error\":\"hu
 허브 시작 후 각 CLI에 MCP 서버로 등록:
 
 ```bash
-# Codex
+# Codex (수동 opt-in 예시)
+# triflux는 config.json을 자동 관리하며, standalone Codex 노이즈 방지를 위해
+# 사전 등록은 disabled로 두고 `tfx hub start` 이후에만 enabled로 전환한다.
 codex mcp add tfx-hub --url http://127.0.0.1:27888/mcp
 
 # Gemini (settings.json)

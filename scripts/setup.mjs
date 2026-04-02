@@ -412,6 +412,62 @@ function ensureCodexProfiles() {
   }
 }
 
+function ensureCodexHubServerConfig({
+  configFile = join(CODEX_DIR, "config.json"),
+  serverName = "tfx-hub",
+  mcpUrl,
+  createIfMissing = false,
+  enabled = false,
+} = {}) {
+  if (typeof mcpUrl !== "string" || !mcpUrl.trim()) {
+    return { ok: false, changed: false, reason: "missing_url" };
+  }
+
+  let config = {};
+  const hasConfig = existsSync(configFile);
+  if (!hasConfig && !createIfMissing) {
+    return { ok: true, changed: false, reason: "config_missing" };
+  }
+
+  if (hasConfig) {
+    try {
+      config = JSON.parse(readFileSync(configFile, "utf8"));
+    } catch (error) {
+      return { ok: false, changed: false, reason: `config_parse_failed:${error.message}` };
+    }
+  }
+
+  if (!config.mcpServers || typeof config.mcpServers !== "object") {
+    config.mcpServers = {};
+  }
+
+  const existing = config.mcpServers[serverName];
+  if (!existing && !createIfMissing) {
+    return { ok: true, changed: false, reason: "server_missing" };
+  }
+
+  const nextEntry = {
+    ...(existing && typeof existing === "object" ? existing : {}),
+    url: mcpUrl,
+    enabled,
+  };
+
+  const changed = JSON.stringify(existing ?? null) !== JSON.stringify(nextEntry);
+  if (!changed) {
+    return { ok: true, changed: false, reason: "already_normalized" };
+  }
+
+  config.mcpServers[serverName] = nextEntry;
+  try {
+    const configDir = dirname(configFile);
+    if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true });
+    writeFileSync(configFile, JSON.stringify(config, null, 2) + "\n", "utf8");
+    return { ok: true, changed: true, reason: existing ? "updated" : "created" };
+  } catch (error) {
+    return { ok: false, changed: false, reason: `config_write_failed:${error.message}` };
+  }
+}
+
 const WINDOWS_DEFAULT_NODE_PATH = "C:/Program Files/nodejs/node.exe";
 const MANAGED_HOOK_FILENAMES = new Set([
   "safety-guard.mjs",
@@ -659,6 +715,7 @@ export {
   DEPRECATED_SKILLS, LEGACY_CODEX_MODELS,
   buildAliasedSkillContent, syncAliasedSkillDir, getVersion, ensureCodexProfiles,
   cleanupStaleSkills, extractManagedHookFilename, getManagedRegistryHooks, ensureHooksInSettings,
+  ensureCodexHubServerConfig,
 };
 
 function runMcpGuardAudit() {
@@ -1261,6 +1318,15 @@ if (process.platform === "win32") {
 const codexProfileResult = ensureCodexProfiles();
 if (codexProfileResult.changed > 0) {
   synced++;
+}
+
+// ── Codex tfx-hub 엔트리 정규화 (standalone Codex startup noisy MCP 방지) ──
+{
+  const codexHubConfig = ensureCodexHubServerConfig({
+    mcpUrl: `http://127.0.0.1:${process.env.TFX_HUB_PORT || "27888"}/mcp`,
+    createIfMissing: false,
+  });
+  if (codexHubConfig.changed) synced++;
 }
 
 // ── Gemini 프로필 자동 보정 ──
