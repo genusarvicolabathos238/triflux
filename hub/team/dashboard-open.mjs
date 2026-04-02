@@ -97,17 +97,20 @@ export function openHeadlessDashboardTarget(sessionName, opts = {}) {
   const safeSession = sanitizeSessionName(sessionName);
   const workerNumber = worker == null ? null : parseWorkerNumber(worker);
 
+  // 선택 워커 → pane focus만 (새 창 열지 않음)
   if (!openAll && workerNumber != null) {
     try {
       psmuxExec(["select-pane", "-t", `${safeSession}:0.${workerNumber}`]);
     } catch {}
+    return true;
   }
 
+  // 전체 열기 (Shift+Enter) → 새 WT 창으로 세션 attach
   return spawnWindowsTerminal(
     { command: "psmux", args: ["attach-session", "-t", safeSession] },
     {
       mode: decideDashboardOpenMode({ openAll }),
-      title: title || (openAll ? `▲ ${safeSession}` : `▲ ${safeSession}:${workerNumber ?? "all"}`),
+      title: title || `▲ ${safeSession}`,
       cwd,
     },
   );
