@@ -2852,6 +2852,12 @@ async function cmdCodexTeam(args = []) {
 // ── Hub preflight 체크 (multi/auto 실행 전) ──
 
 async function checkHubRunning() {
+  // preflight 캐시 먼저 확인 — 히트 시 fetch 스킵
+  try {
+    const cacheFile = join(homedir(), ".claude", "cache", "tfx-preflight.json");
+    const cached = JSON.parse(readFileSync(cacheFile, "utf8"));
+    if (Date.now() - cached.timestamp < 300_000 && cached.hub?.ok) return true;
+  } catch {}
   const port = Number(process.env.TFX_HUB_PORT || "27888");
   try {
     const res = await fetch(`http://127.0.0.1:${port}/status`, {

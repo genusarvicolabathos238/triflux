@@ -143,11 +143,11 @@
         "source": "triflux",
         "matcher": "*",
         "command": "node \"${PLUGIN_ROOT}/scripts/preflight-cache.mjs\"",
-        "priority": 3,
+        "priority": 2,
         "enabled": true,
-        "timeout": 5,
+        "timeout": 8,
         "blocking": false,
-        "description": "CLI/Hub 가용성 캐시"
+        "description": "CLI/Hub 가용성 캐시 (hub-ensure와 병렬 실행)"
       },
       {
         "id": "ext-session-vault-start",

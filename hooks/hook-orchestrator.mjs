@@ -22,7 +22,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
+import { execFileSync, execFile } from "node:child_process";
 import { PLUGIN_ROOT } from "./lib/resolve-root.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -109,6 +109,28 @@ function executeHook(hook, stdinData) {
   }
 }
 
+function executeHookAsync(hook, stdinData) {
+  return new Promise((resolve) => {
+    const cmd = resolveCommand(hook.command);
+    const timeout = (hook.timeout || 10) * 1000;
+    const parts = parseCommand(cmd);
+    if (parts.length === 0) { resolve({ code: 1, stdout: "", stderr: "empty command" }); return; }
+    const [executable, ...args] = parts;
+    const child = execFile(executable, args, {
+      timeout,
+      encoding: "utf8",
+      windowsHide: true,
+      cwd: process.cwd(),
+      env: { ...process.env },
+    }, (err, stdout, stderr) => {
+      if (err) resolve({ code: err.status ?? 1, stdout: stdout || "", stderr: stderr || "" });
+      else resolve({ code: 0, stdout: stdout || "", stderr: "" });
+    });
+    if (stdinData) { child.stdin.write(stdinData); child.stdin.end(); }
+    else child.stdin.end();
+  });
+}
+
 // ── 명령어 파싱 (따옴표 처리) ───────────────────────────────
 function parseCommand(cmd) {
   const parts = [];
@@ -189,7 +211,7 @@ function mergeOutputs(accumulated, newOutput) {
 }
 
 // ── 메인 ────────────────────────────────────────────────────
-function main() {
+async function main() {
   const stdinRaw = readStdin();
   const registry = loadRegistry();
 
@@ -224,28 +246,51 @@ function main() {
     .filter((h) => h.enabled !== false)
     .sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
 
-  // 매처 필터링 + 순차 실행
+  // 매처 필터링
+  const matched = sorted.filter((h) => matchesMatcher(h.matcher, toolName));
+
+  // 같은 priority 그룹별 병렬 실행
+  const groups = [];
+  for (const hook of matched) {
+    const p = hook.priority ?? 999;
+    if (groups.length === 0 || groups[groups.length - 1].priority !== p) {
+      groups.push({ priority: p, hooks: [hook] });
+    } else {
+      groups[groups.length - 1].hooks.push(hook);
+    }
+  }
+
   let mergedOutput = null;
   let blocked = false;
 
-  for (const hook of sorted) {
-    // 매처 체크
-    if (!matchesMatcher(hook.matcher, toolName)) continue;
+  for (const group of groups) {
+    if (blocked) break;
 
-    const result = executeHook(hook, stdinRaw);
-
-    if (result.code === 2) {
-      // BLOCK — stderr를 에러로 전달하고 즉시 중단
-      if (result.stderr) process.stderr.write(result.stderr);
-      blocked = true;
-      break;
+    if (group.hooks.length === 1) {
+      // 단일 훅 — 기존 동기 실행
+      const result = executeHook(group.hooks[0], stdinRaw);
+      if (result.code === 2) {
+        if (result.stderr) process.stderr.write(result.stderr);
+        blocked = true;
+        break;
+      }
+      if (result.code === 0 && result.stdout.trim()) {
+        mergedOutput = mergeOutputs(mergedOutput, result.stdout.trim());
+      }
+    } else {
+      // 같은 priority 다중 훅 — 비동기 병렬 실행
+      const results = await Promise.all(group.hooks.map((h) => executeHookAsync(h, stdinRaw)));
+      for (const result of results) {
+        if (result.code === 2) {
+          if (result.stderr) process.stderr.write(result.stderr);
+          blocked = true;
+          break;
+        }
+        if (result.code === 0 && result.stdout.trim()) {
+          mergedOutput = mergeOutputs(mergedOutput, result.stdout.trim());
+        }
+      }
     }
-
-    if (result.code === 0 && result.stdout.trim()) {
-      mergedOutput = mergeOutputs(mergedOutput, result.stdout.trim());
-    }
-
-    // exit 0이 아닌 다른 코드(1, 3+ 등)는 무시하고 계속
   }
 
   // 결과 출력
@@ -260,10 +305,8 @@ function main() {
   process.exit(0);
 }
 
-try {
-  main();
-} catch (err) {
+main().catch((err) => {
   // 오케스트레이터 자체 실패 → 비차단
   process.stderr.write(`[hook-orchestrator] error: ${err.message}\n`);
   process.exit(0);
-}
+});

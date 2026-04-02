@@ -606,12 +606,19 @@ export function ensureWtProfile(workerCount = 2) {
  * @param {number} [workerCount=2]
  * @returns {boolean} 성공 여부
  */
+let _wtAvailable = null;
+function isWtAvailable() {
+  if (_wtAvailable !== null) return _wtAvailable;
+  if (!process.env.WT_SESSION) { _wtAvailable = false; return false; }
+  try { execSync("where wt.exe", { stdio: "ignore" }); _wtAvailable = true; } catch { _wtAvailable = false; }
+  return _wtAvailable;
+}
+
 export function autoAttachTerminal(sessionName, opts = {}, workerCount = 2) {
   // 보안: sessionName 셸 주입 방지 — 영숫자, 하이픈, 언더스코어만 허용
   const safeName = String(sessionName).replace(/[^a-zA-Z0-9_\-]/g, "");
   sessionName = safeName || "tfx-session";
-  if (!process.env.WT_SESSION) return false;
-  try { execSync("where wt.exe", { stdio: "ignore" }); } catch { return false; }
+  if (!isWtAvailable()) return false;
   ensureWtProfile(workerCount);
   try {
     const child = spawn("wt.exe", [
@@ -653,7 +660,7 @@ export function buildDashboardAttachArgs(sessionName, dashboardLayout = "single"
  * @returns {boolean}
  */
 export function attachDashboardTab(sessionName, workerCount = 2, dashboardLayout = "single", dashboardSize = 0.40, dashboardAnchor = "window") {
-  try { execSync("where wt.exe", { stdio: "ignore" }); } catch { return false; }
+  if (!isWtAvailable()) return false;
   ensureWtProfile(workerCount);
   try {
     const args = buildDashboardAttachArgs(sessionName, dashboardLayout, workerCount, dashboardAnchor);
