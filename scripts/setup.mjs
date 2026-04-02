@@ -575,10 +575,16 @@ function ensureHooksInSettings({
     const expectedCommand = buildManagedHookCommand(hookSpec.fileName, { pluginRoot, nodePath });
     const expectedNormalizedCommand = normalizeCommand(expectedCommand);
 
+    // 중복 체크: (1) 정확한 command 일치 또는 (2) 같은 파일명의 훅이 이미 등록됨
     const hasSameMatcherAndCommand = eventEntries.some((entry) =>
       entry?.matcher === hookSpec.matcher &&
       Array.isArray(entry.hooks) &&
-      entry.hooks.some((hook) => normalizeCommand(hook?.command) === expectedNormalizedCommand),
+      entry.hooks.some((hook) => {
+        if (normalizeCommand(hook?.command) === expectedNormalizedCommand) return true;
+        // pluginRoot가 달라도 같은 훅 파일이면 중복으로 판단
+        const existingFileName = extractManagedHookFilename(hook?.command);
+        return existingFileName === hookSpec.fileName;
+      }),
     );
     if (hasSameMatcherAndCommand) continue;
 
