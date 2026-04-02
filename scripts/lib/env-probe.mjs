@@ -3,6 +3,7 @@ import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { execSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 
 const DEFAULT_STATUS_URL = "http://127.0.0.1:27888/status";
 const _sab = new Int32Array(new SharedArrayBuffer(4));
@@ -48,27 +49,56 @@ export function checkCli(name, { execSyncFn = execSync } = {}) {
   }
 }
 
-export function detectCodexPlan({
+export function detectCodexAuthState({
   homeDir = homedir(),
   existsSyncFn = existsSync,
   readFileSyncFn = readFileSync,
 } = {}) {
   try {
     const authPath = join(homeDir, ".codex", "auth.json");
-    if (!existsSyncFn(authPath)) return { plan: "unknown", source: "no_auth" };
+    if (!existsSyncFn(authPath)) return { plan: "unknown", source: "no_auth", fingerprint: "no_auth" };
 
     const auth = JSON.parse(readFileSyncFn(authPath, "utf8"));
-    if (auth.auth_mode !== "chatgpt") return { plan: "api", source: "api_key" };
+    if (auth.auth_mode !== "chatgpt") {
+      const fingerprint = createHash("sha256")
+        .update(JSON.stringify({
+          auth_mode: auth.auth_mode || "api_key",
+          has_api_key: Boolean(auth.api_key || auth.apiKey),
+        }))
+        .digest("hex");
+      return { plan: "api", source: "api_key", fingerprint };
+    }
 
     const token = auth.tokens?.id_token || auth.tokens?.access_token;
-    if (!token) return { plan: "unknown", source: "no_token" };
+    if (!token) {
+      return {
+        plan: "unknown",
+        source: "no_token",
+        fingerprint: createHash("sha256")
+          .update(JSON.stringify({ auth_mode: auth.auth_mode || "chatgpt", token: null }))
+          .digest("hex"),
+      };
+    }
 
     const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString());
     const plan = payload?.["https://api.openai.com/auth"]?.chatgpt_plan_type || "unknown";
-    return { plan, source: "jwt" };
+    const fingerprint = createHash("sha256")
+      .update(JSON.stringify({
+        auth_mode: auth.auth_mode || "chatgpt",
+        plan,
+        sub: payload?.sub || null,
+        exp: payload?.exp || null,
+      }))
+      .digest("hex");
+    return { plan, source: "jwt", fingerprint };
   } catch {
-    return { plan: "unknown", source: "error" };
+    return { plan: "unknown", source: "error", fingerprint: "error" };
   }
+}
+
+export function detectCodexPlan(options = {}) {
+  const { plan, source } = detectCodexAuthState(options);
+  return { plan, source };
 }
 
 export function checkHub({

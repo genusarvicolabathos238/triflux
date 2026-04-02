@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { Buffer } from "node:buffer";
 
 import {
   buildAll,
@@ -56,6 +57,29 @@ description: plan the work
   return { homeDir, cwd };
 }
 
+function makeJwt(plan = "pro", extra = {}) {
+  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({
+    sub: "user-1",
+    exp: 1_900_000_000,
+    "https://api.openai.com/auth": {
+      chatgpt_plan_type: plan,
+    },
+    ...extra,
+  })).toString("base64url");
+  return `${header}.${payload}.sig`;
+}
+
+function writeAuth(homeDir, plan = "pro", extra = {}) {
+  mkdirSync(join(homeDir, ".codex"), { recursive: true });
+  writeFileSync(join(homeDir, ".codex", "auth.json"), JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      id_token: makeJwt(plan, extra),
+    },
+  }, null, 2), "utf8");
+}
+
 function cleanupFixture({ homeDir, cwd }) {
   rmSync(homeDir, { recursive: true, force: true });
   rmSync(cwd, { recursive: true, force: true });
@@ -72,11 +96,11 @@ describe("cache-warmup", () => {
   it("4개 캐시를 생성하고 TTL 내에서는 스킵한다", () => {
     const fixture = setupFixture();
     try {
+      writeAuth(fixture.homeDir, "pro");
       const preflight = {
         codex: { ok: true, path: "codex" },
         gemini: { ok: false },
         hub: { ok: true, state: "healthy" },
-        codex_plan: { plan: "pro", source: "jwt" },
       };
 
       const first = buildAll({
@@ -107,6 +131,55 @@ describe("cache-warmup", () => {
 
       assert.equal(second.ok, true);
       assert.equal(second.skipped, 4);
+    } finally {
+      cleanupFixture(fixture);
+    }
+  });
+
+  it("Codex auth가 바뀌면 TTL 내라도 auth-sensitive 캐시를 재빌드한다", () => {
+    const fixture = setupFixture();
+    try {
+      writeAuth(fixture.homeDir, "pro", { sub: "user-1" });
+      const preflight = {
+        codex: { ok: true, path: "codex" },
+        gemini: { ok: false },
+        hub: { ok: true, state: "healthy" },
+      };
+
+      const first = buildAll({
+        cwd: fixture.cwd,
+        homeDir: fixture.homeDir,
+        force: true,
+        preflight,
+        execSyncFn: execSyncStub,
+      });
+      assert.equal(first.built, 4);
+
+      const warm = buildAll({
+        cwd: fixture.cwd,
+        homeDir: fixture.homeDir,
+        ttlMs: 60_000,
+        preflight,
+        execSyncFn: execSyncStub,
+      });
+      assert.equal(warm.skipped, 4);
+
+      writeAuth(fixture.homeDir, "plus", { sub: "user-2", exp: 1_900_000_100 });
+      const changed = buildAll({
+        cwd: fixture.cwd,
+        homeDir: fixture.homeDir,
+        ttlMs: 60_000,
+        preflight,
+        execSyncFn: execSyncStub,
+      });
+
+      assert.equal(changed.ok, true);
+      assert.equal(changed.built, 3);
+      assert.equal(changed.skipped, 1);
+      assert.deepEqual(
+        changed.results.filter((result) => result.status === "built").map((result) => result.target).sort(),
+        ["codexSkills", "searchEngines", "tierEnvironment"],
+      );
     } finally {
       cleanupFixture(fixture);
     }
