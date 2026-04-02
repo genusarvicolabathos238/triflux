@@ -146,9 +146,13 @@ function mergeOutputs(accumulated, newOutput) {
     const parsed = JSON.parse(newOutput);
     if (!accumulated) return parsed;
 
-    // hookSpecificOutput는 마지막 것이 이김
+    // hookSpecificOutput 머지 — additionalContext는 누적, 나머지는 덮어쓰기
     if (parsed.hookSpecificOutput) {
-      accumulated.hookSpecificOutput = parsed.hookSpecificOutput;
+      if (accumulated.hookSpecificOutput?.additionalContext && parsed.hookSpecificOutput.additionalContext) {
+        parsed.hookSpecificOutput.additionalContext =
+          accumulated.hookSpecificOutput.additionalContext + "\n" + parsed.hookSpecificOutput.additionalContext;
+      }
+      accumulated.hookSpecificOutput = { ...accumulated.hookSpecificOutput, ...parsed.hookSpecificOutput };
     }
     // systemMessage는 누적
     if (parsed.systemMessage) {
