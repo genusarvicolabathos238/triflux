@@ -64,4 +64,19 @@ describe("psmux-info", () => {
     assert.deepEqual(result.missingCommands, ["capture-pane"]);
     assert.deepEqual(result.missingOptionalCommands, ["detach-client"]);
   });
+
+  it("probePsmuxSupport handles --help failure gracefully", () => {
+    const result = probePsmuxSupport({
+      execFileSyncFn(_command, args) {
+        if (args[0] === "-V") return "psmux 3.3.1";
+        if (args[0] === "--help") throw new Error("help unavailable");
+        throw new Error("unexpected");
+      },
+    });
+
+    assert.equal(result.installed, true);
+    assert.equal(result.version, "3.3.1");
+    assert.equal(result.ok, false, "help 실패 시 required commands 검증 불가 → ok=false");
+    assert.ok(result.missingCommands.length > 0, "모든 required commands가 missing으로 판정");
+  });
 });
