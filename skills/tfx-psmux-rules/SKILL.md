@@ -206,7 +206,43 @@ psmux는 환경마다 설치 위치가 다르다. `hub/team/psmux.mjs`의 `PSMUX
 
 ---
 
-## RULE 5-2: WT 명령 치트시트
+## RULE 5-2: 설치 / 업데이트 preflight
+
+`psmux`는 단순히 PATH에 있다고 끝이 아니다. Triflux는 아래 capability를 전제로 한다.
+
+- `new-session`
+- `attach-session`
+- `kill-session`
+- `capture-pane`
+- `detach-client` (있으면 attach/detach cleanup hardening에 활용)
+
+설치/업데이트가 의심될 때는 먼저:
+
+```bash
+tfx doctor --json
+```
+
+공식 설치/업데이트 기준:
+
+```bash
+# install
+winget install marlocarlo.psmux
+scoop install psmux
+choco install psmux
+cargo install psmux
+
+# update
+winget upgrade marlocarlo.psmux
+scoop update psmux
+choco upgrade psmux
+cargo install psmux --force
+```
+
+**금지:** 문서/스크립트에서 `npm install -g psmux`를 표준 설치 경로처럼 안내하지 않는다.
+
+---
+
+## RULE 5-3: WT 명령 치트시트
 
 ### 패인 분할
 

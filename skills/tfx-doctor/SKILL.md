@@ -146,6 +146,9 @@ options:
 - tfx-route.sh 설치 상태
 - HUD 설치 및 설정 상태
 - Codex/Gemini/Claude CLI 경로 (크로스 셸)
+- **psmux 버전 / capability preflight**
+  - `new-session`, `attach-session`, `kill-session`, `capture-pane`, `detach-client`
+  - 권장 버전 이상인지 여부
 - Codex Profiles (필수 프로파일 존재 여부)
 - 스킬 설치 상태
 - 플러그인 등록 상태

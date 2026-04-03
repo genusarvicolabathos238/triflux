@@ -29,6 +29,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { nudge, deny } from "./lib/hook-utils.mjs";
+import { probePsmuxSupport } from "./lib/psmux-info.mjs";
 
 const CACHE_FILE = join(tmpdir(), "tfx-psmux-check.json");
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5분
@@ -70,16 +71,12 @@ function isPsmuxInstalled() {
     }
   } catch { /* cache miss */ }
 
-  // psmux -V 실행
-  let ok = false;
-  try {
-    execFileSync("psmux", ["-V"], { timeout: 2000, stdio: "ignore" });
-    ok = true;
-  } catch { /* not installed */ }
+  const probe = probePsmuxSupport({ execFileSyncFn: execFileSync });
+  const ok = probe.ok;
 
   // 캐시 저장
   try {
-    writeFileSync(CACHE_FILE, JSON.stringify({ ts: Date.now(), ok }));
+    writeFileSync(CACHE_FILE, JSON.stringify({ ts: Date.now(), ok, version: probe.version, missingCommands: probe.missingCommands }));
   } catch { /* ignore */ }
 
   return ok;

@@ -4,6 +4,7 @@ import childProcess from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
+import { formatPsmuxInstallGuidance } from "../../scripts/lib/psmux-info.mjs";
 
 const PSMUX_BIN = (() => {
   if (process.env.PSMUX_BIN) return process.env.PSMUX_BIN;
@@ -166,9 +167,7 @@ function ensurePsmuxInstalled() {
       "psmux가 설치되어 있지 않습니다.\n\n" +
       "psmux는 Codex/Gemini CLI를 병렬 세션으로 실행하는 터미널 멀티플렉서입니다.\n" +
       "설치 방법 (택 1):\n" +
-      "  winget install marlocarlo.psmux\n" +
-      "  scoop install psmux\n" +
-      "  npm install -g psmux\n\n" +
+      `${formatPsmuxInstallGuidance("  ")}\n\n` +
       "설치 후 터미널을 재시작하세요."
     );
   }
@@ -1059,7 +1058,7 @@ export function spawnWorker(sessionName, workerName, cmd) {
   if (!hasPsmux()) {
     throw new Error(
       "psmux가 설치되어 있지 않습니다.\n" +
-      "설치: winget install marlocarlo.psmux  (또는 scoop install psmux / npm i -g psmux)"
+      `설치 방법:\n${formatPsmuxInstallGuidance("  ")}`
     );
   }
 
@@ -1101,7 +1100,7 @@ export function spawnWorker(sessionName, workerName, cmd) {
  */
 export function getWorkerStatus(sessionName, workerName) {
   if (!hasPsmux()) {
-    throw new Error("psmux 미설치. 설치: winget install marlocarlo.psmux (또는 npm i -g psmux)");
+    throw new Error(`psmux 미설치. 설치 방법:\n${formatPsmuxInstallGuidance("  ")}`);
   }
   try {
     const pane = resolvePane(sessionName, workerName);
@@ -1126,7 +1125,7 @@ export function getWorkerStatus(sessionName, workerName) {
  */
 export function killWorker(sessionName, workerName) {
   if (!hasPsmux()) {
-    throw new Error("psmux 미설치. 설치: winget install marlocarlo.psmux (또는 npm i -g psmux)");
+    throw new Error(`psmux 미설치. 설치 방법:\n${formatPsmuxInstallGuidance("  ")}`);
   }
   try {
     const { paneId, status } = getWorkerStatus(sessionName, workerName);
@@ -1213,7 +1212,7 @@ export function killWorker(sessionName, workerName) {
  */
 export function captureWorkerOutput(sessionName, workerName, lines = 50) {
   if (!hasPsmux()) {
-    throw new Error("psmux 미설치. 설치: winget install marlocarlo.psmux (또는 npm i -g psmux)");
+    throw new Error(`psmux 미설치. 설치 방법:\n${formatPsmuxInstallGuidance("  ")}`);
   }
   try {
     const { paneId } = getWorkerStatus(sessionName, workerName);
