@@ -190,7 +190,7 @@
         "matcher": "*",
         "command": "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"${HOME}/.claude/scripts/mcp-cleanup.ps1\"",
         "priority": 100,
-        "enabled": false,
+        "enabled": true,
         "timeout": 8,
         "blocking": false,
         "description": "MCP 고아 프로세스 정리"
