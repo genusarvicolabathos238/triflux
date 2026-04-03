@@ -16,6 +16,7 @@ const {
   PLUGIN_ROOT,
   CLAUDE_DIR,
   ensureHooksInSettings,
+  ensureCodexHubServerConfig,
 } = await import('../../scripts/setup.mjs');
 
 // ── helpers ──
@@ -191,5 +192,80 @@ describe('setup-sync: managed hook registration', () => {
       if (prevClaudePluginRoot === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
       else process.env.CLAUDE_PLUGIN_ROOT = prevClaudePluginRoot;
     }
+  });
+});
+
+describe('setup-sync: codex tfx-hub config normalization', () => {
+  before(ensureTmpDir);
+  after(cleanTmpDir);
+
+  it('createIfMissing=true면 tfx-hub를 disabled 기본값으로 생성한다', () => {
+    const configPath = join(TMP_DIR, 'codex-create.json');
+    const result = ensureCodexHubServerConfig({
+      configFile: configPath,
+      mcpUrl: 'http://127.0.0.1:27888/mcp',
+      createIfMissing: true,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.changed, true);
+
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+    assert.deepEqual(config.mcpServers['tfx-hub'], {
+      url: 'http://127.0.0.1:27888/mcp',
+      enabled: false,
+    });
+  });
+
+  it('기존 tfx-hub 엔트리는 URL을 갱신하고 enabled=false로 정규화한다', () => {
+    const configPath = join(TMP_DIR, 'codex-update.json');
+    writeFileSync(configPath, JSON.stringify({
+      mcpServers: {
+        'tfx-hub': { url: 'http://127.0.0.1:9999/mcp', enabled: true, note: 'keep-me' },
+        other: { url: 'http://127.0.0.1:3000/mcp' },
+      },
+    }, null, 2));
+
+    const result = ensureCodexHubServerConfig({
+      configFile: configPath,
+      mcpUrl: 'http://127.0.0.1:27888/mcp',
+      createIfMissing: false,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.changed, true);
+
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+    assert.deepEqual(config.mcpServers['tfx-hub'], {
+      url: 'http://127.0.0.1:27888/mcp',
+      enabled: false,
+      note: 'keep-me',
+    });
+    assert.deepEqual(config.mcpServers.other, { url: 'http://127.0.0.1:3000/mcp' });
+  });
+
+  it('enabled=true를 요청하면 명시적으로 활성화 상태를 기록한다', () => {
+    const configPath = join(TMP_DIR, 'codex-enable.json');
+    writeFileSync(configPath, JSON.stringify({
+      mcpServers: {
+        'tfx-hub': { url: 'http://127.0.0.1:27888/mcp', enabled: false },
+      },
+    }, null, 2));
+
+    const result = ensureCodexHubServerConfig({
+      configFile: configPath,
+      mcpUrl: 'http://127.0.0.1:27888/mcp',
+      createIfMissing: false,
+      enabled: true,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.changed, true);
+
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+    assert.deepEqual(config.mcpServers['tfx-hub'], {
+      url: 'http://127.0.0.1:27888/mcp',
+      enabled: true,
+    });
   });
 });

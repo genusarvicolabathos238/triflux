@@ -26,6 +26,7 @@ import {
   syncAliasedSkillDir, hasProfileSection, replaceProfileSection,
   ensureCodexProfiles, getVersion, cleanupStaleSkills, DEPRECATED_SKILLS,
   extractManagedHookFilename, getManagedRegistryHooks, ensureHooksInSettings,
+  ensureCodexHubServerConfig,
 } from "../scripts/setup.mjs";
 
 const PKG_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -810,7 +811,7 @@ function cmdSetup(options = {}) {
   // hub MCP 사전 등록 (서버 미실행이어도 설정만 등록 — hub start 시 즉시 사용 가능)
   if (existsSync(join(PKG_ROOT, "hub", "server.mjs"))) {
     const defaultHubUrl = `http://127.0.0.1:${process.env.TFX_HUB_PORT || "27888"}/mcp`;
-    autoRegisterMcp(defaultHubUrl);
+    autoRegisterMcp(defaultHubUrl, { codexEnabled: false });
     summary.push({ item: "Hub MCP", status: "✅", detail: "등록됨" });
     console.log("");
   }
@@ -3217,38 +3218,20 @@ function startHubAfterUpdate(info) {
 }
 
 // 설치된 CLI에 tfx-hub MCP 서버 자동 등록 (1회 설정, 이후 재실행 불필요)
-function autoRegisterMcp(mcpUrl) {
+function autoRegisterMcp(mcpUrl, { codexEnabled = false } = {}) {
   section("MCP 자동 등록");
 
-  // Codex — codex mcp add
+  // Codex — config.json에 기본 disabled 엔트리로 등록
   if (which("codex")) {
     try {
-      // 이미 등록됐는지 확인
-      const list = execSync("codex mcp list 2>&1", { encoding: "utf8", timeout: 10000, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
-      if (list.includes("tfx-hub")) {
-        ok("Codex: 이미 등록됨");
+      const result = ensureCodexHubServerConfig({ mcpUrl, createIfMissing: true, enabled: codexEnabled });
+      if (!result.ok) throw new Error(result.reason || "unknown");
+      if (result.changed) {
+        ok(`Codex: config.json에 등록 완료 (${codexEnabled ? "enabled" : "기본 disabled"})`);
       } else {
-        execFileSync("codex", ["mcp", "add", "tfx-hub", "--url", mcpUrl], { timeout: 10000, stdio: "ignore", windowsHide: true });
-        ok("Codex: MCP 등록 완료");
+        ok(`Codex: 이미 등록됨 (${codexEnabled ? "enabled" : "기본 disabled"})`);
       }
-    } catch {
-      // mcp list/add 미지원 → 설정 파일 직접 수정
-      try {
-        const codexDir = join(homedir(), ".codex");
-        const configFile = join(codexDir, "config.json");
-        let config = {};
-        if (existsSync(configFile)) config = JSON.parse(readFileSync(configFile, "utf8"));
-        if (!config.mcpServers) config.mcpServers = {};
-        if (!config.mcpServers["tfx-hub"]) {
-          config.mcpServers["tfx-hub"] = { url: mcpUrl };
-          if (!existsSync(codexDir)) mkdirSync(codexDir, { recursive: true });
-          writeFileSync(configFile, JSON.stringify(config, null, 2) + "\n");
-          ok("Codex: config.json에 등록 완료");
-        } else {
-          ok("Codex: 이미 등록됨");
-        }
-      } catch (e) { warn(`Codex 등록 실패: ${e.message}`); }
-    }
+    } catch (e) { warn(`Codex 등록 실패: ${e.message}`); }
   } else {
     info("Codex: 미설치 (건너뜀)");
   }
@@ -3338,6 +3321,7 @@ async function cmdHub(args = [], options = {}) {
         try {
           const info = JSON.parse(readFileSync(HUB_PID_FILE, "utf8"));
           process.kill(info.pid, 0); // 프로세스 존재 확인
+          autoRegisterMcp(info.url, { codexEnabled: true });
           console.log(`\n  ${YELLOW}⚠${RESET} hub 이미 실행 중 (PID ${info.pid}, ${info.url})\n`);
           return;
         } catch {
@@ -3381,7 +3365,7 @@ async function cmdHub(args = [], options = {}) {
         console.log(`    PID:  ${hubInfo.pid}`);
         console.log(`    DB:   ${DIM}${getPipelineStateDbPath(PKG_ROOT)}${RESET}`);
         console.log("");
-        autoRegisterMcp(hubInfo.url);
+        autoRegisterMcp(hubInfo.url, { codexEnabled: true });
         console.log("");
       } else {
         // 직접 포그라운드 모드로 안내
