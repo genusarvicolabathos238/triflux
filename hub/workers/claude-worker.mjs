@@ -3,35 +3,25 @@
 
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
-import { toStringList, safeJsonParse, createWorkerError, DEFAULT_TIMEOUT_MS, DEFAULT_KILL_GRACE_MS } from './worker-utils.mjs';
 
-function appendTextFragments(value, parts) {
-  if (value == null) return;
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (trimmed) parts.push(trimmed);
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) appendTextFragments(item, parts);
-    return;
-  }
-  if (typeof value === 'object') {
-    if (typeof value.text === 'string') appendTextFragments(value.text, parts);
-    if (typeof value.result === 'string') appendTextFragments(value.result, parts);
-    if (typeof value.content === 'string' || Array.isArray(value.content) || value.content) {
-      appendTextFragments(value.content, parts);
-    }
-    if (typeof value.message === 'string' || Array.isArray(value.message) || value.message) {
-      appendTextFragments(value.message, parts);
-    }
-  }
+import { extractText, terminateChild, withRetry } from './worker-utils.mjs';
+
+const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
+const DEFAULT_KILL_GRACE_MS = 1000;
+
+function toStringList(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item ?? '').trim())
+    .filter(Boolean);
 }
 
-function extractText(event) {
-  const parts = [];
-  appendTextFragments(event, parts);
-  return parts.join('\n').trim();
+function safeJsonParse(line) {
+  try {
+    return JSON.parse(line);
+  } catch {
+    return null;
+  }
 }
 
 function findSessionId(event) {
@@ -40,6 +30,62 @@ function findSessionId(event) {
     || event?.message?.session_id
     || event?.message?.sessionId
     || null;
+}
+
+function createWorkerError(message, details = {}) {
+  const error = new Error(message);
+  Object.assign(error, details);
+  return error;
+}
+
+function normalizeRetryOptions(retryOptions) {
+  if (!retryOptions || typeof retryOptions !== 'object') {
+    return Object.freeze({});
+  }
+  return Object.freeze({ ...retryOptions });
+}
+
+function isClaudeRetryable(error) {
+  return error?.code === 'WORKER_EXIT'
+    || error?.code === 'ETIMEDOUT'
+    || error?.code === 'WORKER_STDIN_CLOSED';
+}
+
+function detectClaudeCategory(error) {
+  const combined = `${error?.message || ''}\n${error?.stderr || ''}`.toLowerCase();
+
+  if (/(unauthorized|forbidden|auth|login|token|credential|apikey|api key)/.test(combined)) {
+    return 'auth';
+  }
+  if (/unknown option|invalid option|config|permission-mode|mcp-config/.test(combined)) {
+    return 'config';
+  }
+  if (/stdin|prompt|input/.test(combined) && error?.code !== 'WORKER_STDIN_CLOSED') {
+    return 'input';
+  }
+
+  return 'transient';
+}
+
+function buildClaudeErrorInfo(error, attempts) {
+  const category = detectClaudeCategory(error);
+  let recovery = 'Restart the Claude worker session and retry the turn.';
+
+  if (category === 'auth') {
+    recovery = 'Refresh the Claude authentication state and retry.';
+  } else if (category === 'config') {
+    recovery = 'Check the Claude CLI flags, MCP configuration, and permission settings.';
+  } else if (category === 'input') {
+    recovery = 'Check the Claude request payload before retrying.';
+  }
+
+  return Object.freeze({
+    code: error?.code || 'CLAUDE_EXECUTION_ERROR',
+    retryable: isClaudeRetryable(error),
+    attempts,
+    category,
+    recovery,
+  });
 }
 
 function buildClaudeArgs(worker, options) {
@@ -88,6 +134,7 @@ export class ClaudeWorker {
     this.extraArgs = toStringList(options.extraArgs);
     this.timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : DEFAULT_TIMEOUT_MS;
     this.killGraceMs = Number(options.killGraceMs) > 0 ? Number(options.killGraceMs) : DEFAULT_KILL_GRACE_MS;
+    this.retryOptions = normalizeRetryOptions(options.retryOptions);
     this.onEvent = typeof options.onEvent === 'function' ? options.onEvent : null;
     this.controlRequestHandler = typeof options.controlRequestHandler === 'function'
       ? options.controlRequestHandler
@@ -126,15 +173,7 @@ export class ClaudeWorker {
   }
 
   _terminateChild(child) {
-    if (!child || child.exitCode !== null || child.killed) return;
-    try { child.stdin.end(); } catch {}
-    try { child.kill(); } catch {}
-    const timer = setTimeout(() => {
-      if (child.exitCode === null) {
-        try { child.kill('SIGKILL'); } catch {}
-      }
-    }, this.killGraceMs);
-    timer.unref?.();
+    terminateChild(child, this.killGraceMs);
   }
 
   async _handleControlRequest(event) {
@@ -401,8 +440,20 @@ export class ClaudeWorker {
   }
 
   async execute(prompt, options = {}) {
+    let attempts = 0;
+
     try {
-      const result = await this.run(prompt, options);
+      const result = await withRetry(async () => {
+        attempts += 1;
+        if (attempts > 1) {
+          await this.restart();
+        }
+        return this.run(prompt, options);
+      }, {
+        ...this.retryOptions,
+        shouldRetry: (error) => isClaudeRetryable(error),
+      });
+
       return {
         output: result.response,
         exitCode: 0,
@@ -416,6 +467,7 @@ export class ClaudeWorker {
         exitCode: error.code === 'ETIMEDOUT' ? 124 : 1,
         threadId: null,
         sessionKey: options.sessionKey || this.sessionId || null,
+        error: buildClaudeErrorInfo(error, attempts || 1),
         raw: null,
       };
     }

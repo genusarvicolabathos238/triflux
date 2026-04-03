@@ -19,12 +19,23 @@
  */
 
 /**
+ * 워커 구조화 오류 메타데이터
+ * @typedef {object} WorkerErrorInfo
+ * @property {string} code - 오류 코드
+ * @property {boolean} retryable - 재시도 대상 여부
+ * @property {number} attempts - 실행 시도 횟수
+ * @property {'transient'|'auth'|'config'|'input'} category - 오류 분류
+ * @property {string} recovery - 권장 복구 가이드
+ */
+
+/**
  * 워커 실행 결과
  * @typedef {object} WorkerResult
  * @property {string} output - 최종 텍스트 출력
  * @property {number} exitCode - 종료 코드(0=성공)
  * @property {string | null} [threadId] - Codex 세션 threadId
  * @property {string | null} [sessionKey] - 내부 세션 키
+ * @property {WorkerErrorInfo} [error] - 구조화 오류 메타데이터
  * @property {unknown} [raw] - 원본 tool call 결과
  */
 
@@ -38,3 +49,4 @@
  * @property {string} type - 'codex' | 'gemini' | 'claude' | 'delegator'
  */
 
+export const WORKER_TYPES = Object.freeze(['codex', 'gemini', 'claude', 'delegator']);

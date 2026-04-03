@@ -2,38 +2,26 @@
 // ADR-006: --output-format stream-json 기반 단발 실행 워커.
 
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { delimiter, extname, join } from 'node:path';
 import readline from 'node:readline';
-import { IS_WINDOWS } from '../platform.mjs';
-import { toStringList, safeJsonParse, createWorkerError, DEFAULT_TIMEOUT_MS, DEFAULT_KILL_GRACE_MS } from './worker-utils.mjs';
 
-function appendTextFragments(value, parts) {
-  if (value == null) return;
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (trimmed) parts.push(trimmed);
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) appendTextFragments(item, parts);
-    return;
-  }
-  if (typeof value === 'object') {
-    if (typeof value.text === 'string') appendTextFragments(value.text, parts);
-    if (typeof value.response === 'string') appendTextFragments(value.response, parts);
-    if (typeof value.result === 'string') appendTextFragments(value.result, parts);
-    if (typeof value.content === 'string' || Array.isArray(value.content) || value.content) {
-      appendTextFragments(value.content, parts);
-    }
-    if (value.message) appendTextFragments(value.message, parts);
-  }
+import { extractText, terminateChild, withRetry } from './worker-utils.mjs';
+
+const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
+const DEFAULT_KILL_GRACE_MS = 1000;
+
+function toStringList(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item ?? '').trim())
+    .filter(Boolean);
 }
 
-function extractText(event) {
-  const parts = [];
-  appendTextFragments(event, parts);
-  return parts.join('\n').trim();
+function safeJsonParse(line) {
+  try {
+    return JSON.parse(line);
+  } catch {
+    return null;
+  }
 }
 
 function findLastEvent(events, predicate) {
@@ -70,100 +58,61 @@ function buildGeminiArgs(options) {
   return args;
 }
 
-function resolveSpawnCommand(command, env = process.env) {
-  const raw = String(command ?? '').trim();
-  if (!raw || !IS_WINDOWS) return raw;
-
-  const pathExts = (env.PATHEXT || process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD')
-    .split(';')
-    .map((ext) => ext.trim().toLowerCase())
-    .filter(Boolean);
-  const extensions = extname(raw)
-    ? ['']
-    : [...new Set(['.cmd', '.exe', '.bat', ...pathExts, ''])];
-
-  const tryResolve = (base) => {
-    for (const ext of extensions) {
-      const candidate = `${base}${ext}`;
-      if (existsSync(candidate)) return candidate;
-    }
-    return null;
-  };
-
-  if (raw.includes('\\') || raw.includes('/')) {
-    return tryResolve(raw.replaceAll('/', '\\')) || raw;
-  }
-
-  const pathEntries = String(env.PATH || process.env.PATH || '')
-    .split(delimiter)
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-
-  for (const entry of pathEntries) {
-    const resolved = tryResolve(join(entry, raw));
-    if (resolved) return resolved;
-  }
-
-  return raw;
+function createWorkerError(message, details = {}) {
+  const error = new Error(message);
+  Object.assign(error, details);
+  return error;
 }
 
-function quoteWindowsCmdArg(value) {
-  const raw = String(value ?? '');
-  if (raw.length === 0) return '""';
-
-  const escaped = raw
-    .replace(/(\\*)"/g, '$1$1\\"')
-    .replace(/(\\+)$/g, '$1$1');
-
-  return /[\s"&()<>^|]/.test(raw)
-    ? `"${escaped}"`
-    : escaped;
+function normalizeRetryOptions(retryOptions) {
+  if (!retryOptions || typeof retryOptions !== 'object') {
+    return Object.freeze({});
+  }
+  return Object.freeze({ ...retryOptions });
 }
 
-function quotePosixShellArg(value) {
-  const raw = String(value ?? '');
-  return `'${raw.replaceAll("'", `'\"'\"'`)}'`;
+function isGeminiRetryable(error) {
+  return error?.code === 'WORKER_EXIT'
+    && error?.result?.exitCode !== 0
+    && error?.result?.exitCode !== 2;
 }
 
-function toBashPath(value) {
-  return String(value ?? '')
-    .replace(/^([A-Za-z]):/, (_, drive) => `/${drive.toLowerCase()}`)
-    .replaceAll('\\', '/');
-}
+function detectGeminiCategory(error) {
+  const combined = `${error?.message || ''}\n${error?.stderr || ''}`.toLowerCase();
 
-function buildSpawnSpec(command, args, env = process.env) {
-  const resolvedCommand = resolveSpawnCommand(command, env);
-
-  if (IS_WINDOWS && /\.(cmd|bat)$/i.test(resolvedCommand)) {
-    const commandLine = [resolvedCommand, ...args]
-      .map((part) => quoteWindowsCmdArg(part))
-      .join(' ');
-
-    return {
-      command: 'cmd.exe',
-      args: ['/d', '/s', '/c', commandLine],
-      resolvedCommand,
-    };
+  if (/(unauthorized|forbidden|auth|login|token|credential|apikey|api key)/.test(combined)) {
+    return 'auth';
+  }
+  if (error?.result?.exitCode === 2 || /expected stream-json|unknown option|invalid option|config/.test(combined)) {
+    return 'config';
+  }
+  if (error?.code === 'WORKER_EVENT_ERROR') {
+    return 'input';
   }
 
-  if (IS_WINDOWS && !extname(resolvedCommand) && existsSync(resolvedCommand)) {
-    const bashCommand = env.TFX_BASH_BIN || env.BASH || 'bash';
-    const commandLine = [toBashPath(resolvedCommand), ...args]
-      .map((part) => quotePosixShellArg(part))
-      .join(' ');
+  return 'transient';
+}
 
-    return {
-      command: bashCommand,
-      args: ['-lc', commandLine],
-      resolvedCommand,
-    };
+function buildGeminiErrorInfo(error, attempts) {
+  const category = detectGeminiCategory(error);
+  const retryable = isGeminiRetryable(error);
+  let recovery = 'Retry the Gemini worker after correcting the reported issue.';
+
+  if (category === 'auth') {
+    recovery = 'Refresh the Gemini authentication state and retry.';
+  } else if (category === 'config') {
+    recovery = 'Check the Gemini CLI flags and worker configuration.';
+  } else if (category === 'input') {
+    recovery = 'Check the Gemini request payload and streamed event format.';
   }
 
-  return {
-    command: resolvedCommand,
-    args,
-    resolvedCommand,
-  };
+  return Object.freeze({
+    code: error?.code || 'GEMINI_EXECUTION_ERROR',
+    retryable,
+    attempts,
+    category,
+    recovery,
+  });
 }
 
 /**
@@ -184,6 +133,7 @@ export class GeminiWorker {
     this.extraArgs = toStringList(options.extraArgs);
     this.timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : DEFAULT_TIMEOUT_MS;
     this.killGraceMs = Number(options.killGraceMs) > 0 ? Number(options.killGraceMs) : DEFAULT_KILL_GRACE_MS;
+    this.retryOptions = normalizeRetryOptions(options.retryOptions);
     this.onEvent = typeof options.onEvent === 'function' ? options.onEvent : null;
 
     this.state = 'idle';
@@ -214,7 +164,7 @@ export class GeminiWorker {
       return this.getStatus();
     }
     const child = this.child;
-    this._terminateChild(child);
+    terminateChild(child, this.killGraceMs);
     await new Promise((resolve) => {
       child.once('close', resolve);
       setTimeout(resolve, this.killGraceMs + 50).unref?.();
@@ -228,19 +178,6 @@ export class GeminiWorker {
     await this.stop();
     this.state = 'idle';
     return this.getStatus();
-  }
-
-  _terminateChild(child) {
-    if (!child || child.exitCode !== null || child.killed) return;
-    try { child.stdin.end(); } catch {}
-    try { child.kill(); } catch {}
-
-    const timer = setTimeout(() => {
-      if (child.exitCode === null) {
-        try { child.kill('SIGKILL'); } catch {}
-      }
-    }, this.killGraceMs);
-    timer.unref?.();
   }
 
   async run(prompt, options = {}) {
@@ -263,12 +200,10 @@ export class GeminiWorker {
         promptArgument: options.promptArgument ?? '',
       }),
     ];
-    const env = { ...this.env, ...(options.env || {}) };
-    const spawnSpec = buildSpawnSpec(this.command, args, env);
 
-    const child = spawn(spawnSpec.command, spawnSpec.args, {
+    const child = spawn(this.command, args, {
       cwd: options.cwd || this.cwd,
-      env,
+      env: { ...this.env, ...(options.env || {}) },
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -324,7 +259,7 @@ export class GeminiWorker {
 
     const timeout = setTimeout(() => {
       timedOut = true;
-      this._terminateChild(child);
+      terminateChild(child, this.killGraceMs);
     }, timeoutMs);
     timeout.unref?.();
 
@@ -347,13 +282,10 @@ export class GeminiWorker {
     const response = [
       extractText(resultEvent),
       ...events
-        .filter((event) => (
-          event?.type === 'assistant'
-          || (event?.type === 'message' && event?.role === 'assistant')
-        ))
+        .filter((event) => event?.type === 'message' || event?.type === 'assistant')
         .map((event) => extractText(event))
         .filter(Boolean),
-      ...stdoutLines.filter((line) => line.trim() !== '""'),
+      ...stdoutLines,
     ]
       .filter(Boolean)
       .join('\n')
@@ -361,8 +293,8 @@ export class GeminiWorker {
 
     const result = {
       type: 'gemini',
-      command: spawnSpec.resolvedCommand,
-      args: spawnSpec.args,
+      command: this.command,
+      args,
       response,
       events,
       resultEvent,
@@ -410,8 +342,17 @@ export class GeminiWorker {
   }
 
   async execute(prompt, options = {}) {
+    let attempts = 0;
+
     try {
-      const result = await this.run(prompt, options);
+      const result = await withRetry(async () => {
+        attempts += 1;
+        return this.run(prompt, options);
+      }, {
+        ...this.retryOptions,
+        shouldRetry: (error) => isGeminiRetryable(error),
+      });
+
       return {
         output: result.response,
         exitCode: 0,
@@ -423,6 +364,7 @@ export class GeminiWorker {
         output: error.stderr || error.message || 'Gemini worker failed',
         exitCode: error.code === 'ETIMEDOUT' ? 124 : 1,
         sessionKey: options.sessionKey || null,
+        error: buildGeminiErrorInfo(error, attempts || 1),
         raw: error.result || null,
       };
     }

@@ -4,21 +4,18 @@
 // - hud-qos-status.mjs를 ~/.claude/hud/에 동기화
 // - skills/를 ~/.claude/skills/에 동기화
 
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync, readdirSync, existsSync, chmodSync, unlinkSync, rmSync } from "fs";
-import { join, dirname, basename } from "path";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync, readdirSync, existsSync, chmodSync, unlinkSync } from "fs";
+import { join, dirname } from "path";
 import { homedir } from "os";
 import { spawn, execFileSync } from "child_process";
 import { fileURLToPath } from "url";
 import { cleanupTmpFiles } from "./tmp-cleanup.mjs";
-import { buildAll as buildCacheWarmup } from "./cache-warmup.mjs";
-import { ensureGeminiProfiles } from "./lib/gemini-profiles.mjs";
-import { probePsmuxSupport, formatPsmuxInstallGuidance } from "./lib/psmux-info.mjs";
-import { loadRegistry, remediate, scanForStdioServers } from "./lib/mcp-guard-engine.mjs";
 
 const PLUGIN_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const CLAUDE_DIR = join(homedir(), ".claude");
 const CODEX_DIR = join(homedir(), ".codex");
 const CODEX_CONFIG_PATH = join(CODEX_DIR, "config.toml");
+const SETUP_MARKER_PATH = join(CLAUDE_DIR, "cache", "tfx-setup-marker.json");
 
 // ── 로컬 개발 모드 감지 ──
 
@@ -54,100 +51,8 @@ const REQUIRED_CODEX_PROFILES = [
       'model = "gpt-5.3-codex-spark"',
       'model_reasoning_effort = "low"',
     ],
-    proOnly: true, // Pro 플랜 전용 — Plus/기본에서는 미동작
   },
 ];
-
-const SKILL_ALIASES = [
-  {
-    alias: "tfx-ralph",
-    source: "tfx-persist",
-  },
-];
-
-/** 패키지에서 제거된 스킬 목록 — setup/update 시 ~/.claude/skills/에서 자동 삭제 */
-const DEPRECATED_SKILLS = [
-  "tfx-eval",
-  "tfx-learn",
-  "tfx-wrapup",
-];
-
-/** 마이그레이션 대상 구형 Codex 모델 — 이 모델을 사용하는 프로필을 감지하여 안내 */
-const LEGACY_CODEX_MODELS = ["o4-mini", "o3", "o3-pro", "o1", "o1-mini", "o1-pro", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "codex-mini-latest"];
-
-/**
- * ~/.claude/skills/ 에서 패키지에 없는 stale tfx-* 스킬을 제거한다.
- * @param {string} skillsDst - ~/.claude/skills/ 경로
- * @param {string} skillsSrc - 패키지의 skills/ 경로
- * @returns {{ removed: string[], count: number }}
- */
-function cleanupStaleSkills(skillsDst, skillsSrc) {
-  const removed = [];
-  if (!existsSync(skillsDst)) return { removed, count: 0 };
-
-  const packageSkills = new Set();
-  if (existsSync(skillsSrc)) {
-    for (const name of readdirSync(skillsSrc)) {
-      packageSkills.add(name);
-    }
-  }
-  // aliases도 유효한 스킬로 등록
-  for (const { alias } of SKILL_ALIASES) {
-    packageSkills.add(alias);
-  }
-
-  for (const name of readdirSync(skillsDst)) {
-    // tfx- 접두사가 아닌 스킬은 사용자 커스텀 — 건드리지 않음
-    if (!name.startsWith("tfx-")) continue;
-    if (packageSkills.has(name)) continue;
-
-    // 패키지에 없는 tfx-* 스킬 → 삭제
-    const skillDir = join(skillsDst, name);
-    try {
-      rmSync(skillDir, { recursive: true, force: true });
-      removed.push(name);
-    } catch {
-      // 삭제 실패 시 무시
-    }
-  }
-  return { removed, count: removed.length };
-}
-
-function buildAliasedSkillContent(srcContent, { alias, source }) {
-  return srcContent
-    .replace(/^name:\s*.+$/m, `name: ${alias}`)
-    .replaceAll(source, alias)
-    .replace(/^#\s+.+$/m, `# ${alias} — Compatibility Alias for ${source}`);
-}
-
-function syncAliasedSkillDir(srcDir, dstDir, { alias, source }) {
-  if (!existsSync(dstDir)) mkdirSync(dstDir, { recursive: true });
-
-  let count = 0;
-  for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
-    const srcPath = join(srcDir, entry.name);
-    const dstPath = join(dstDir, entry.name);
-
-    if (entry.isDirectory()) {
-      count += syncAliasedSkillDir(srcPath, dstPath, { alias, source });
-      continue;
-    }
-
-    if (!entry.name.endsWith(".md")) continue;
-
-    const rawContent = readFileSync(srcPath, "utf8");
-    const nextContent = entry.name === "SKILL.md"
-      ? buildAliasedSkillContent(rawContent, { alias, source })
-      : rawContent;
-
-    if (!existsSync(dstPath) || readFileSync(dstPath, "utf8") !== nextContent) {
-      writeFileSync(dstPath, nextContent, "utf8");
-      count++;
-    }
-  }
-
-  return count;
-}
 
 // ── 파일 동기화 ──
 
@@ -193,19 +98,9 @@ const SYNC_MAP = [
     label: "hub/workers/claude-worker.mjs",
   },
   {
-    src: join(PLUGIN_ROOT, "hub", "workers", "worker-utils.mjs"),
-    dst: join(CLAUDE_DIR, "scripts", "hub", "workers", "worker-utils.mjs"),
-    label: "hub/workers/worker-utils.mjs",
-  },
-  {
     src: join(PLUGIN_ROOT, "hub", "workers", "factory.mjs"),
     dst: join(CLAUDE_DIR, "scripts", "hub", "workers", "factory.mjs"),
     label: "hub/workers/factory.mjs",
-  },
-  {
-    src: join(PLUGIN_ROOT, "scripts", "mcp-cleanup.ps1"),
-    dst: join(CLAUDE_DIR, "scripts", "mcp-cleanup.ps1"),
-    label: "mcp-cleanup.ps1",
   },
   {
     src: join(PLUGIN_ROOT, "hud", "hud-qos-status.mjs"),
@@ -273,39 +168,9 @@ const SYNC_MAP = [
     label: "lib/mcp-server-catalog.mjs",
   },
   {
-    src: join(PLUGIN_ROOT, "scripts", "lib", "mcp-manifest.mjs"),
-    dst: join(CLAUDE_DIR, "scripts", "lib", "mcp-manifest.mjs"),
-    label: "lib/mcp-manifest.mjs",
-  },
-  {
-    src: join(PLUGIN_ROOT, "scripts", "lib", "hook-utils.mjs"),
-    dst: join(CLAUDE_DIR, "scripts", "lib", "hook-utils.mjs"),
-    label: "lib/hook-utils.mjs",
-  },
-  {
-    src: join(PLUGIN_ROOT, "scripts", "psmux-safety-guard.mjs"),
-    dst: join(CLAUDE_DIR, "scripts", "psmux-safety-guard.mjs"),
-    label: "psmux-safety-guard.mjs",
-  },
-  {
-    src: join(PLUGIN_ROOT, "scripts", "lib", "psmux-info.mjs"),
-    dst: join(CLAUDE_DIR, "scripts", "lib", "psmux-info.mjs"),
-    label: "lib/psmux-info.mjs",
-  },
-  {
-    src: join(PLUGIN_ROOT, "scripts", "lib", "cross-review-utils.mjs"),
-    dst: join(CLAUDE_DIR, "scripts", "lib", "cross-review-utils.mjs"),
-    label: "lib/cross-review-utils.mjs",
-  },
-  {
     src: join(PLUGIN_ROOT, "scripts", "lib", "keyword-rules.mjs"),
     dst: join(CLAUDE_DIR, "scripts", "lib", "keyword-rules.mjs"),
     label: "lib/keyword-rules.mjs",
-  },
-  {
-    src: join(PLUGIN_ROOT, "scripts", "lib", "gemini-profiles.mjs"),
-    dst: join(CLAUDE_DIR, "scripts", "lib", "gemini-profiles.mjs"),
-    label: "lib/gemini-profiles.mjs",
   },
   {
     src: join(PLUGIN_ROOT, "hub", "team", "agent-map.json"),
@@ -351,6 +216,30 @@ function shouldSyncTextFile(src, dst) {
   } catch {
     return true;
   }
+}
+
+function getPackageVersion() {
+  try {
+    return JSON.parse(readFileSync(join(PLUGIN_ROOT, "package.json"), "utf8")).version;
+  } catch {
+    return null;
+  }
+}
+
+function readMarker() {
+  if (!existsSync(SETUP_MARKER_PATH)) return null;
+
+  try {
+    return JSON.parse(readFileSync(SETUP_MARKER_PATH, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function writeMarker(marker) {
+  const markerDir = dirname(SETUP_MARKER_PATH);
+  if (!existsSync(markerDir)) mkdirSync(markerDir, { recursive: true });
+  writeFileSync(SETUP_MARKER_PATH, JSON.stringify(marker, null, 2) + "\n", "utf8");
 }
 
 function escapeRegExp(value) {
@@ -412,435 +301,28 @@ function ensureCodexProfiles() {
       writeFileSync(CODEX_CONFIG_PATH, updated, "utf8");
     }
 
-    return { ok: true, changed };
-  } catch (error) {
-    return { ok: false, changed: 0, message: error.message };
-  }
-}
-
-function ensureCodexHubServerConfig({
-  configFile = join(CODEX_DIR, "config.json"),
-  serverName = "tfx-hub",
-  mcpUrl,
-  createIfMissing = false,
-  enabled = false,
-} = {}) {
-  if (typeof mcpUrl !== "string" || !mcpUrl.trim()) {
-    return { ok: false, changed: false, reason: "missing_url" };
-  }
-
-  let config = {};
-  const hasConfig = existsSync(configFile);
-  if (!hasConfig && !createIfMissing) {
-    return { ok: true, changed: false, reason: "config_missing" };
-  }
-
-  if (hasConfig) {
-    try {
-      config = JSON.parse(readFileSync(configFile, "utf8"));
-    } catch (error) {
-      return { ok: false, changed: false, reason: `config_parse_failed:${error.message}` };
-    }
-  }
-
-  if (!config.mcpServers || typeof config.mcpServers !== "object") {
-    config.mcpServers = {};
-  }
-
-  const existing = config.mcpServers[serverName];
-  if (!existing && !createIfMissing) {
-    return { ok: true, changed: false, reason: "server_missing" };
-  }
-
-  const nextEntry = {
-    ...(existing && typeof existing === "object" ? existing : {}),
-    url: mcpUrl,
-    enabled,
-  };
-
-  const changed = JSON.stringify(existing ?? null) !== JSON.stringify(nextEntry);
-  if (!changed) {
-    return { ok: true, changed: false, reason: "already_normalized" };
-  }
-
-  config.mcpServers[serverName] = nextEntry;
-  try {
-    const configDir = dirname(configFile);
-    if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true });
-    writeFileSync(configFile, JSON.stringify(config, null, 2) + "\n", "utf8");
-    return { ok: true, changed: true, reason: existing ? "updated" : "created" };
-  } catch (error) {
-    return { ok: false, changed: false, reason: `config_write_failed:${error.message}` };
-  }
-}
-
-const WINDOWS_DEFAULT_NODE_PATH = "C:/Program Files/nodejs/node.exe";
-const MANAGED_HOOK_FILENAMES = new Set([
-  "safety-guard.mjs",
-  "agent-route-guard.mjs",
-  "cross-review-tracker.mjs",
-  "error-context.mjs",
-  "keyword-detector.mjs",
-  "pipeline-stop.mjs",
-  "subagent-verifier.mjs",
-]);
-
-function toForwardPath(value) {
-  return String(value || "").replace(/\\/g, "/");
-}
-
-function quotePath(value) {
-  return `"${toForwardPath(value)}"`;
-}
-
-function normalizeCommand(value) {
-  return toForwardPath(value).replace(/\s+/g, " ").trim();
-}
-
-function extractManagedHookFilename(command) {
-  if (typeof command !== "string") return null;
-  const matches = command.match(/[A-Za-z0-9._-]+\.mjs/g) || [];
-  for (const match of matches) {
-    const fileName = basename(match);
-    if (MANAGED_HOOK_FILENAMES.has(fileName)) return fileName;
-  }
-  return null;
-}
-
-function isValidManagedHookRoot(candidateRoot) {
-  if (typeof candidateRoot !== "string" || !candidateRoot.trim()) return false;
-  const root = candidateRoot.trim();
-  if (!existsSync(join(root, "hooks", "hook-registry.json"))) return false;
-  if (!existsSync(join(root, "scripts", "run.cjs"))) return false;
-  if (!existsSync(join(root, "scripts", "keyword-detector.mjs"))) return false;
-
-  for (const fileName of MANAGED_HOOK_FILENAMES) {
-    if (!existsSync(join(root, "hooks", fileName))) return false;
-  }
-
-  return true;
-}
-
-function resolveHookPluginRoot() {
-  const envRoot = process.env.PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT;
-  if (isValidManagedHookRoot(envRoot)) {
-    return toForwardPath(envRoot.trim());
-  }
-
-  try {
-    const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
-    const npmGlobalRoot = execFileSync(npmCmd, ["root", "-g"], {
-      encoding: "utf8",
-      timeout: 5000,
-      stdio: ["ignore", "pipe", "ignore"],
-      windowsHide: true,
-    }).trim();
-    const npmPluginRoot = npmGlobalRoot ? join(npmGlobalRoot, "triflux") : "";
-    if (isValidManagedHookRoot(npmPluginRoot)) {
-      return toForwardPath(npmPluginRoot);
-    }
+    return changed;
   } catch {
-    // npm global root 조회 실패 시 로컬 패키지 루트를 fallback으로 사용
+    return 0;
   }
-
-  return toForwardPath(PLUGIN_ROOT);
-}
-
-function resolveManagedNodePath() {
-  if (process.platform === "win32" && existsSync(WINDOWS_DEFAULT_NODE_PATH)) {
-    return toForwardPath(WINDOWS_DEFAULT_NODE_PATH);
-  }
-  return toForwardPath(process.execPath || "node");
-}
-
-function buildManagedHookCommand(fileName, { pluginRoot, nodePath }) {
-  if (fileName === "keyword-detector.mjs") {
-    const runScript = join(pluginRoot, "scripts", "run.cjs");
-    const detectorScript = join(pluginRoot, "scripts", "keyword-detector.mjs");
-    return `${quotePath(nodePath)} ${quotePath(runScript)} ${quotePath(detectorScript)}`;
-  }
-  const hookPath = join(pluginRoot, "hooks", fileName);
-  return `${quotePath(nodePath)} ${quotePath(hookPath)}`;
-}
-
-function getManagedRegistryHooks(registryPath = join(PLUGIN_ROOT, "hooks", "hook-registry.json")) {
-  if (!existsSync(registryPath)) return [];
-
-  let registry;
-  try {
-    registry = JSON.parse(readFileSync(registryPath, "utf8"));
-  } catch {
-    return [];
-  }
-
-  const hooks = [];
-  for (const [event, eventEntries] of Object.entries(registry.events || {})) {
-    if (!Array.isArray(eventEntries)) continue;
-
-    for (const eventEntry of eventEntries) {
-      if (!eventEntry || eventEntry.enabled === false || eventEntry.source !== "triflux") continue;
-      const fileName = extractManagedHookFilename(eventEntry.command);
-      if (!fileName) continue;
-
-      hooks.push({
-        id: String(eventEntry.id || fileName.replace(/\.mjs$/i, "")),
-        event: String(event),
-        matcher: String(eventEntry.matcher || "*"),
-        fileName,
-        timeout: Number.isFinite(eventEntry.timeout) ? eventEntry.timeout : undefined,
-        blocking: typeof eventEntry.blocking === "boolean" ? eventEntry.blocking : undefined,
-        priority: Number.isFinite(eventEntry.priority) ? eventEntry.priority : undefined,
-      });
-    }
-  }
-
-  return hooks;
-}
-
-function ensureHooksInSettings({
-  settingsPath = join(homedir(), ".claude", "settings.json"),
-  registryPath = join(PLUGIN_ROOT, "hooks", "hook-registry.json"),
-  pluginRoot = resolveHookPluginRoot(),
-  nodePath = resolveManagedNodePath(),
-} = {}) {
-  const managedHooks = getManagedRegistryHooks(registryPath);
-  if (managedHooks.length === 0) {
-    return {
-      ok: false,
-      changed: false,
-      total: 0,
-      added: [],
-      reason: "registry_unavailable",
-    };
-  }
-
-  let settings = {};
-  if (existsSync(settingsPath)) {
-    try {
-      settings = JSON.parse(readFileSync(settingsPath, "utf8"));
-    } catch (error) {
-      return {
-        ok: false,
-        changed: false,
-        total: managedHooks.length,
-        added: [],
-        reason: `settings_parse_failed:${error.message}`,
-      };
-    }
-  }
-  if (!settings.hooks || typeof settings.hooks !== "object") settings.hooks = {};
-
-  // ── 이중 실행 정리: orchestrator가 있는 이벤트에서 개별 훅 제거 ──
-  // 두 가지 패턴 모두 처리:
-  //   A) orchestrator 엔트리와 별도 개별 훅 엔트리가 공존 → 개별 엔트리 제거
-  //   B) orchestrator와 개별 훅이 같은 엔트리의 hooks[] 안에 공존 → 개별 훅 제거
-  let dedupRemoved = 0;
-  for (const [event, entries] of Object.entries(settings.hooks)) {
-    if (!Array.isArray(entries)) continue;
-    const hasOrch = entries.some((e) =>
-      Array.isArray(e?.hooks) &&
-      e.hooks.some((h) => typeof h?.command === "string" && h.command.includes("hook-orchestrator")),
-    );
-    if (!hasOrch) continue;
-
-    // 패턴 A: orchestrator 없는 별도 엔트리 제거
-    const before = entries.length;
-    settings.hooks[event] = entries.filter((e) =>
-      Array.isArray(e?.hooks) &&
-      e.hooks.some((h) => typeof h?.command === "string" && h.command.includes("hook-orchestrator")),
-    );
-    dedupRemoved += before - settings.hooks[event].length;
-
-    // 패턴 B: orchestrator가 있는 엔트리 내부에서 개별 훅 제거
-    for (const entry of settings.hooks[event]) {
-      if (!Array.isArray(entry.hooks) || entry.hooks.length <= 1) continue;
-      const beforeInner = entry.hooks.length;
-      entry.hooks = entry.hooks.filter(
-        (h) => typeof h?.command === "string" && h.command.includes("hook-orchestrator"),
-      );
-      dedupRemoved += beforeInner - entry.hooks.length;
-    }
-  }
-
-  const added = [];
-  for (const hookSpec of managedHooks) {
-    if (!Array.isArray(settings.hooks[hookSpec.event])) settings.hooks[hookSpec.event] = [];
-    const eventEntries = settings.hooks[hookSpec.event];
-
-    // hook-orchestrator가 이미 등록된 이벤트는 건너뜀.
-    // orchestrator가 hook-registry.json에서 체이닝하므로 개별 등록하면 이중 실행됨.
-    const hasOrchestrator = eventEntries.some((entry) =>
-      Array.isArray(entry.hooks) &&
-      entry.hooks.some((hook) =>
-        typeof hook?.command === "string" && hook.command.includes("hook-orchestrator"),
-      ),
-    );
-    if (hasOrchestrator) continue;
-
-    const expectedCommand = buildManagedHookCommand(hookSpec.fileName, { pluginRoot, nodePath });
-    const expectedNormalizedCommand = normalizeCommand(expectedCommand);
-
-    // 중복 체크: (1) 정확한 command 일치 또는 (2) 같은 파일명의 훅이 이미 등록됨
-    const hasSameMatcherAndCommand = eventEntries.some((entry) =>
-      entry?.matcher === hookSpec.matcher &&
-      Array.isArray(entry.hooks) &&
-      entry.hooks.some((hook) => {
-        if (normalizeCommand(hook?.command) === expectedNormalizedCommand) return true;
-        // pluginRoot가 달라도 같은 훅 파일이면 중복으로 판단
-        const existingFileName = extractManagedHookFilename(hook?.command);
-        return existingFileName === hookSpec.fileName;
-      }),
-    );
-    if (hasSameMatcherAndCommand) continue;
-
-    const hookEntry = {
-      type: "command",
-      command: expectedCommand,
-    };
-    if (Number.isFinite(hookSpec.timeout)) hookEntry.timeout = hookSpec.timeout;
-    if (typeof hookSpec.blocking === "boolean") hookEntry.blocking = hookSpec.blocking;
-    if (Number.isFinite(hookSpec.priority)) hookEntry.priority = hookSpec.priority;
-
-    const matcherEntry = eventEntries.find(
-      (entry) => entry?.matcher === hookSpec.matcher && Array.isArray(entry.hooks),
-    );
-    if (matcherEntry) {
-      matcherEntry.hooks.push(hookEntry);
-    } else {
-      eventEntries.push({ matcher: hookSpec.matcher, hooks: [hookEntry] });
-    }
-
-    added.push({
-      id: hookSpec.id,
-      event: hookSpec.event,
-      matcher: hookSpec.matcher,
-      fileName: hookSpec.fileName,
-    });
-  }
-
-  if (added.length === 0 && dedupRemoved === 0) {
-    return {
-      ok: true,
-      changed: false,
-      total: managedHooks.length,
-      added: [],
-      dedupRemoved: 0,
-    };
-  }
-
-  // 중복 제거만 발생한 경우에도 저장 필요
-  if (added.length === 0 && dedupRemoved > 0) {
-    try {
-      writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf8");
-    } catch (error) {
-      return {
-        ok: false,
-        changed: false,
-        total: managedHooks.length,
-        added: [],
-        dedupRemoved,
-        reason: `settings_write_failed:${error.message}`,
-      };
-    }
-    return {
-      ok: true,
-      changed: true,
-      total: managedHooks.length,
-      added: [],
-      dedupRemoved,
-    };
-  }
-
-  let backupPath = null;
-  try {
-    if (existsSync(settingsPath)) {
-      backupPath = `${settingsPath}.bak.${Date.now()}`;
-      copyFileSync(settingsPath, backupPath);
-    } else {
-      const settingsDir = dirname(settingsPath);
-      if (!existsSync(settingsDir)) mkdirSync(settingsDir, { recursive: true });
-    }
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf8");
-  } catch (error) {
-    return {
-      ok: false,
-      changed: false,
-      total: managedHooks.length,
-      added,
-      backupPath,
-      reason: `settings_write_failed:${error.message}`,
-    };
-  }
-
-  return {
-    ok: true,
-    changed: true,
-    total: managedHooks.length,
-    added,
-    backupPath,
-  };
 }
 
 export {
-  replaceProfileSection, hasProfileSection, escapeRegExp, detectDevMode,
-  SYNC_MAP, BREADCRUMB_PATH, PLUGIN_ROOT, CLAUDE_DIR,
-  SKILL_ALIASES, REQUIRED_CODEX_PROFILES,
-  DEPRECATED_SKILLS, LEGACY_CODEX_MODELS,
-  buildAliasedSkillContent, syncAliasedSkillDir, getVersion, ensureCodexProfiles,
-  cleanupStaleSkills, extractManagedHookFilename, getManagedRegistryHooks, ensureHooksInSettings,
-  ensureCodexHubServerConfig,
+  replaceProfileSection,
+  hasProfileSection,
+  detectDevMode,
+  SYNC_MAP,
+  BREADCRUMB_PATH,
+  PLUGIN_ROOT,
+  CLAUDE_DIR,
+  SETUP_MARKER_PATH,
+  readMarker,
+  writeMarker,
 };
-
-function runMcpGuardAudit() {
-  let registry;
-  try {
-    registry = loadRegistry();
-  } catch (error) {
-    return {
-      audited: 0,
-      modified: 0,
-      messages: [`[mcp-guard] registry 로드 실패: ${error.message}`],
-    };
-  }
-
-  const watchedPaths = Array.isArray(registry?.policies?.watched_paths)
-    ? registry.policies.watched_paths
-    : [];
-
-  const messages = [];
-  let modified = 0;
-
-  for (const watchedPath of watchedPaths) {
-    const stdioServers = scanForStdioServers(watchedPath);
-    if (stdioServers.length === 0) continue;
-
-    const result = remediate(watchedPath, stdioServers, registry.policies);
-    if (result.modified) {
-      modified++;
-      const serverNames = stdioServers.map((server) => server.name).join(", ");
-      messages.push(`[mcp-guard] ${watchedPath}: stdio MCP 자동 정리 (${serverNames})`);
-      if (result.replacement?.name && result.replacement?.url) {
-        messages.push(`[mcp-guard] ${watchedPath}: ${result.replacement.name} -> ${result.replacement.url}`);
-      }
-      if (result.backupPath) {
-        messages.push(`[mcp-guard] ${watchedPath}: 백업 ${result.backupPath}`);
-      }
-    }
-
-    for (const warning of result.warnings || []) {
-      messages.push(`${warning} (${watchedPath})`);
-    }
-  }
-
-  return {
-    audited: watchedPaths.length,
-    modified,
-    messages,
-  };
-}
 
 async function main() {
 const isSync = process.argv.includes("--sync");
+const isForce = process.argv.includes("--force");
 const isDev = detectDevMode();
 
 if (isDev) {
@@ -849,6 +331,13 @@ if (isDev) {
 
 if (isSync) {
   console.log("  [sync] \uBA85\uC2DC\uC801 \uC7AC\uB3D9\uAE30\uD654 \uC2E4\uD589");
+}
+
+const pkgVersion = getPackageVersion();
+const marker = readMarker();
+if (pkgVersion && marker?.version === pkgVersion && !isForce) {
+  console.log(`setup: skip (v${pkgVersion} already synced)`);
+  process.exit(0);
 }
 
 let synced = 0;
@@ -979,35 +468,6 @@ if (existsSync(skillsSrc)) {
 
     synced += syncSkillDir(skillDir, join(skillsDst, name));
   }
-
-  for (const { alias, source } of SKILL_ALIASES) {
-    const sourceDir = join(skillsSrc, source);
-    const sourceSkillMd = join(sourceDir, "SKILL.md");
-    if (!existsSync(sourceSkillMd)) continue;
-    synced += syncAliasedSkillDir(sourceDir, join(skillsDst, alias), { alias, source });
-  }
-}
-
-// ── docs 동기화 ──
-const docsDirs = ['docs/design', 'docs/research'];
-for (const dir of docsDirs) {
-  const src = join(PLUGIN_ROOT, dir);
-  const dest = join(CLAUDE_DIR, dir);
-  if (existsSync(src)) {
-    mkdirSync(dest, { recursive: true });
-    for (const f of readdirSync(src).filter(f => f.endsWith('.md'))) {
-      copyFileSync(join(src, f), join(dest, f));
-    }
-  }
-}
-
-// ── MCP 설정 감사 및 stdio 가드 적용 ──
-const mcpAudit = runMcpGuardAudit();
-if (mcpAudit.modified > 0) {
-  synced += mcpAudit.modified;
-}
-for (const message of mcpAudit.messages) {
-  console.log(`  ${message}`);
 }
 
 // ── settings.json 통합 R/W ──
@@ -1106,55 +566,12 @@ function applyHooks(s) {
         },
         {
           type: "command",
-          command: `${nodeRef} "${pluginRoot}/scripts/mcp-gateway-ensure.mjs"`,
-          timeout: 8,
-        },
-        {
-          type: "command",
           command: `${nodeRef} "${pluginRoot}/scripts/preflight-cache.mjs"`,
           timeout: 5,
         },
       ],
     });
     changed = true;
-  }
-
-  // ── Stop 훅: MCP 고아 프로세스 정리 (Windows 전용) ──
-  if (process.platform === "win32") {
-    if (!Array.isArray(s.hooks.Stop)) s.hooks.Stop = [];
-
-    const cleanupScriptPath = join(CLAUDE_DIR, "scripts", "mcp-cleanup.ps1").replace(/\\/g, "/");
-    const hasCleanupHook = s.hooks.Stop.some((entry) =>
-      Array.isArray(entry.hooks) &&
-      entry.hooks.some((h) => typeof h.command === "string" && h.command.includes("mcp-cleanup")),
-    );
-
-    if (!hasCleanupHook && existsSync(cleanupScriptPath.replace(/\//g, "\\"))) {
-      // 기존 Stop 엔트리가 있으면 거기에 추가, 없으면 새 엔트리 생성
-      const existingEntry = s.hooks.Stop.find((entry) => entry.matcher === "*" && Array.isArray(entry.hooks));
-      const cleanupHook = {
-        type: "command",
-        command: `powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "${cleanupScriptPath}"`,
-        timeout: 8,
-      };
-
-      if (existingEntry) {
-        existingEntry.hooks.push(cleanupHook);
-      } else {
-        s.hooks.Stop.push({ matcher: "*", hooks: [cleanupHook] });
-      }
-      changed = true;
-    } else if (hasCleanupHook) {
-      for (const entry of s.hooks.Stop) {
-        if (!Array.isArray(entry.hooks)) continue;
-        for (const h of entry.hooks) {
-          if (typeof h.command === "string" && h.command.includes("mcp-cleanup") && !h.command.includes(cleanupScriptPath)) {
-            h.command = `powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "${cleanupScriptPath}"`;
-            changed = true;
-          }
-        }
-      }
-    }
   }
 
   // ── PreToolUse 훅: headless-guard (auto-route) ──
@@ -1247,15 +664,6 @@ if (settingsChanged) {
   }
 }
 
-// ── hook-registry 기반 누락 훅 자동 등록 ──
-{
-  const hookEnsureResult = ensureHooksInSettings();
-  if (hookEnsureResult.changed) synced++;
-  if (hookEnsureResult.dedupRemoved > 0) {
-    console.log(`  ✓ 중복 훅 ${hookEnsureResult.dedupRemoved}개 엔트리 자동 제거 (orchestrator 체이닝)`);
-  }
-}
-
 // ── Stale PID 파일 정리 (hub 좀비 방지) ──
 
 const HUB_PID_FILE = join(CLAUDE_DIR, "cache", "tfx-hub", "hub.pid");
@@ -1270,86 +678,23 @@ if (existsSync(HUB_PID_FILE)) {
 }
 
 // ── psmux 자동 설치 (Windows, headless 모드용) ──
-// psmux: Windows용 터미널 멀티플렉서. Codex/Gemini CLI를 병렬 세션으로 실행할 때 필요.
-// 없어도 triflux 기본 기능은 동작하지만, headless 멀티모델 오케스트레이션이 비활성화됨.
 
-let psmuxInstalled = false;
-let psmuxSupport = null;
 if (process.platform === "win32") {
   try {
     execFileSync("where", ["psmux"], { stdio: "ignore" });
-    psmuxInstalled = true;
   } catch {
     // psmux 미설치 — winget으로 자동 설치 시도
-    console.log("  psmux 미설치 — 자동 설치 시도 중...");
+    console.log("  psmux 미설치 — winget으로 설치 중...");
     try {
       execFileSync("winget", ["install", "--id", "marlocarlo.psmux", "--accept-package-agreements", "--accept-source-agreements"], {
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 60000,
       });
       console.log("  \x1b[32m✓\x1b[0m psmux 설치 완료");
-      psmuxInstalled = true;
       synced++;
     } catch {
-      console.log([
-        "  \x1b[33m⚠\x1b[0m psmux 자동 설치 실패 — 수동 설치 방법:",
-        ...formatPsmuxInstallGuidance("    \x1b[36m").split("\n").map((line, index) => `${line}\x1b[0m${index === 0 ? "  (권장)" : ""}`),
-        "  \x1b[2m(없어도 기본 기능은 동작합니다 — 멀티모델 병렬 실행만 비활성화)\x1b[0m",
-      ].join("\n"));
+      console.log("  \x1b[33m⚠\x1b[0m psmux 자동 설치 실패 — 수동 설치: winget install psmux");
     }
-  }
-} else {
-  // non-Windows: tmux 사용 (psmux 불필요)
-  psmuxInstalled = true;
-}
-
-// ── psmux 기본 셸 자동 수정 (cmd.exe → PowerShell) + capability preflight ──
-if (psmuxInstalled && process.platform === "win32") {
-  psmuxSupport = probePsmuxSupport();
-  if (!psmuxSupport.ok) {
-    const missing = psmuxSupport.missingCommands.join(", ");
-    console.log([
-      "  \x1b[33m⚠\x1b[0m psmux capability preflight 경고:",
-      `    missing commands: ${missing || "(unknown)"}`,
-      `    detected version: ${psmuxSupport.version || "unknown"}`,
-      "    update 권장:",
-      psmuxSupport.updateHint,
-    ].join("\n"));
-  } else if (!psmuxSupport.recommended) {
-    console.log([
-      `  \x1b[33m⚠\x1b[0m psmux v${psmuxSupport.version || "unknown"} 감지 — 권장 버전은 v${psmuxSupport.recommendedVersion}+`,
-      "    update 권장:",
-      psmuxSupport.updateHint,
-    ].join("\n"));
-  }
-
-  try {
-    const shellOut = execFileSync("psmux", ["show-options", "-g", "default-shell"], { encoding: "utf8", timeout: 3000, stdio: ["pipe", "pipe", "pipe"] }).trim();
-    if (!/powershell|pwsh/i.test(shellOut)) {
-      // pwsh(7) 우선, powershell.exe(5) fallback
-      let pwsh = "";
-      try { execFileSync("where", ["pwsh"], { stdio: "ignore" }); pwsh = "pwsh"; } catch {
-        try { execFileSync("where", ["powershell.exe"], { stdio: "ignore" }); pwsh = "powershell.exe"; } catch {}
-      }
-      if (pwsh) {
-        execFileSync("psmux", ["set-option", "-g", "default-shell", pwsh], { timeout: 3000, stdio: "ignore" });
-        console.log(`  \x1b[32m✓\x1b[0m psmux 기본 셸 → ${pwsh}`);
-        synced++;
-      }
-    }
-  } catch {
-    // psmux show-options 미지원 또는 서버 미실행 — 무시
-  }
-}
-
-// ── stale 스킬 정리 (패키지에서 제거된 tfx-* 스킬 삭제) ──
-{
-  const skillsDst = join(CLAUDE_DIR, "skills");
-  const skillsSrc = join(PLUGIN_ROOT, "skills");
-  const cleanup = cleanupStaleSkills(skillsDst, skillsSrc);
-  if (cleanup.count > 0) {
-    console.log(`  \x1b[32m✓\x1b[0m ${cleanup.count}개 구형 스킬 제거: ${cleanup.removed.join(", ")}`);
-    synced++;
   }
 }
 
@@ -1408,24 +753,8 @@ if (process.platform === "win32") {
 
 // ── Codex 프로필 자동 보정 ──
 
-const codexProfileResult = ensureCodexProfiles();
-if (codexProfileResult.changed > 0) {
-  synced++;
-}
-
-// ── Codex tfx-hub 엔트리 정규화 (standalone Codex startup noisy MCP 방지) ──
-{
-  const codexHubConfig = ensureCodexHubServerConfig({
-    mcpUrl: `http://127.0.0.1:${process.env.TFX_HUB_PORT || "27888"}/mcp`,
-    createIfMissing: false,
-  });
-  if (codexHubConfig.changed) synced++;
-}
-
-// ── Gemini 프로필 자동 보정 ──
-
-const geminiProfilesAdded = ensureGeminiProfiles().added;
-if (geminiProfilesAdded > 0) {
+const codexProfilesAdded = ensureCodexProfiles();
+if (codexProfilesAdded > 0) {
   synced++;
 }
 
@@ -1441,19 +770,12 @@ if (existsSync(mcpCheck)) {
   child.unref(); // 부모 프로세스와 분리 — 비동기 실행
 }
 
-// ── Step 6. 캐시 웜업 Phase 1 ──
-
-try {
-  buildCacheWarmup({
-    cwd: process.cwd(),
-    ttlMs: 5 * 60 * 1000,
-  });
-} catch {
-  // cache-warmup 실패는 setup 전체를 막지 않는다
-}
-
 // ── /tmp 임시 파일 자동 정리 (setup 지연 방지: fire-and-forget) ──
 cleanupTmpFiles().catch(() => {});
+
+if (pkgVersion) {
+  writeMarker({ version: pkgVersion, timestamp: Date.now() });
+}
 
 // ── postinstall 배너 (npm install 시에만 출력) ──
 
@@ -1466,9 +788,7 @@ if (process.env.npm_lifecycle_event === "postinstall") {
   const R = "\x1b[0m";
 
   const ver = (() => {
-    try {
-      return JSON.parse(readFileSync(join(PLUGIN_ROOT, "package.json"), "utf8")).version;
-    } catch { return "?"; }
+    return pkgVersion || "?";
   })();
 
   console.log(`
@@ -1480,7 +800,6 @@ ${B}╚════════════════════════�
   ${G}✓${R} hud-qos-status   → ~/.claude/hud/
   ${G}✓${R} ${synced > 0 ? synced + " files synced" : "all files up to date"}
   ${G}✓${R} HUD statusLine   → settings.json
-  ${psmuxInstalled ? `${G}✓${R} psmux            → headless 멀티모델 오케스트레이션${psmuxSupport?.recommended === false ? ` ${D}(update 권장 v${psmuxSupport.recommendedVersion}+ )${R}` : ""}` : `${Y}○${R} psmux 미설치     → ${D}winget install marlocarlo.psmux${R} ${D}(선택)${R}`}
 
 ${B}Commands:${R}
   ${C}triflux${R} setup     파일 동기화 + HUD 설정
@@ -1504,19 +823,6 @@ ${B}Skills (Claude Code):${R}
 ${Y}!${R} 세션 재시작 후 스킬이 활성화됩니다
 ${D}https://github.com/tellang/triflux${R}
 `);
-
-  // ── GitHub Star 체크 (비인터랙티브 — postinstall에서는 confirm 불가) ──
-  try {
-    execFileSync("gh", ["auth", "status"], { timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
-    try {
-      execFileSync("gh", ["api", "user/starred/tellang/triflux"], { timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
-      console.log(`  ${G}⭐${R} 이미 함께하고 계시군요.`);
-    } catch {
-      console.log(`  ${Y}⭐${R} 하나가 큰 차이를 만듭니다. ${D}https://github.com/tellang/triflux${R}`);
-    }
-  } catch {
-    // gh 미설치/미인증 — 무시
-  }
 }
 
 process.exit(0);

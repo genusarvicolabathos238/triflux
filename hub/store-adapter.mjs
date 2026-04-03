@@ -32,6 +32,12 @@ function buildAssignCallbackEvent(row) {
   };
 }
 
+/**
+ * 인메모리 방식의 데이터 저장소를 생성합니다.
+ * SQLite를 사용할 수 없는 환경에서 폴백(fallback)으로 사용됩니다.
+ * 
+ * @returns {object} 인메모리 스토어 객체
+ */
 export function createMemoryStore() {
   const agents = new Map();
   const messages = new Map();
@@ -586,6 +592,14 @@ export function createMemoryStore() {
   return store;
 }
 
+/**
+ * 환경에 따라 적절한 스토어 어댑터(SQLite 또는 인메모리)를 생성합니다.
+ * 
+ * @param {string} dbPath - SQLite 데이터베이스 파일 경로
+ * @param {object} [options] - 옵션
+ * @param {Function} [options.loadDatabase] - 데이터베이스 로더 함수
+ * @returns {Promise<object>} 생성된 스토어 어댑터
+ */
 export async function createStoreAdapter(dbPath, options = {}) {
   const loadDatabase = options.loadDatabase || importBetterSqlite3;
   try {

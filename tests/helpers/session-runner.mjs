@@ -18,7 +18,13 @@ const TFX_EVAL_DIR = path.join(os.homedir(), '.claude', 'cache', 'tfx-eval');
 const HEARTBEAT_PATH = path.join(TFX_EVAL_DIR, 'e2e-live.json');
 const PROJECT_DIR = TFX_EVAL_DIR;
 
-/** Sanitize test name for use as filename: strip leading slashes, replace / with - */
+/**
+ * 테스트 이름을 파일 이름으로 사용할 수 있도록 정제합니다.
+ * 앞부분의 슬래시를 제거하고 중간의 슬래시를 하이픈(-)으로 교체합니다.
+ * 
+ * @param {string} name - 정제할 테스트 이름
+ * @returns {string} 정제된 이름
+ */
 export function sanitizeTestName(name) {
   return name.replace(/^\/+/, '').replace(/\//g, '-');
 }
@@ -33,12 +39,11 @@ function atomicWriteSync(filePath, data) {
 // --- Testable NDJSON parser ---
 
 /**
- * Parse an array of NDJSON lines into structured transcript data.
- * Pure function — no I/O, no side effects. Used by both the streaming
- * reader and unit tests.
+ * NDJSON 라인 배열을 구조화된 트랜스크립트 데이터로 파싱합니다.
+ * I/O가 없는 순수 함수로, 스트리밍 리더와 유닛 테스트에서 공통으로 사용됩니다.
  *
- * @param {string[]} lines
- * @returns {{ transcript: any[], resultLine: any|null, turnCount: number, toolCallCount: number, toolCalls: Array<{tool: string, input: any, output: string}> }}
+ * @param {string[]} lines - 파싱할 NDJSON 라인 배열
+ * @returns {{ transcript: any[], resultLine: any|null, turnCount: number, toolCallCount: number, toolCalls: Array<{tool: string, input: any, output: string}> }} 파싱된 결과 데이터
  */
 export function parseNDJSON(lines) {
   const transcript = [];
@@ -89,16 +94,19 @@ const TFX_ERROR_PATTERNS = [
 // --- Main runner ---
 
 /**
- * @param {{
- *   prompt: string,
- *   workingDirectory: string,
- *   maxTurns?: number,
- *   allowedTools?: string[],
- *   timeout?: number,
- *   testName?: string,
- *   runId?: string,
- *   model?: string,
- * }} options
+ * Claude CLI 하위 프로세스를 실행하여 스킬 E2E 테스트를 수행합니다.
+ * `claude -p`를 독립된 프로세스로 실행하고 stdin으로 프롬프트를 전달하며,
+ * NDJSON 출력을 실시간으로 파싱하여 진행 상황을 추적하고 tfx 오류를 검사합니다.
+ * 
+ * @param {object} options - 실행 옵션
+ * @param {string} options.prompt - 실행할 프롬프트
+ * @param {string} options.workingDirectory - 작업 디렉토리
+ * @param {number} [options.maxTurns=15] - 최대 턴 수
+ * @param {string[]} [options.allowedTools=['Bash', 'Read', 'Write']] - 허용된 도구 목록
+ * @param {number} [options.timeout=120000] - 최대 실행 시간 (ms)
+ * @param {string} [options.testName] - 테스트 이름 (로그 및 파일 생성용)
+ * @param {string} [options.runId] - 실행 ID (결과 디렉토리 구분용)
+ * @param {string} [options.model] - 사용할 모델 이름
  * @returns {Promise<{
  *   toolCalls: Array<{tool: string, input: any, output: string}>,
  *   tfxErrors: string[],
@@ -110,7 +118,7 @@ const TFX_ERROR_PATTERNS = [
  *   model: string,
  *   firstResponseMs: number,
  *   maxInterTurnMs: number,
- * }>}
+ * }>} 테스트 실행 결과 데이터
  */
 export async function runSkillTest(options) {
   const {

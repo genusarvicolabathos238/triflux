@@ -24,12 +24,12 @@ const DEFAULT_EVAL_DIR = path.join(os.homedir(), '.claude', 'cache', 'tfx-eval')
 // --- Shared helpers ---
 
 /**
- * Determine if a planted-bug eval passed based on judge results vs ground truth thresholds.
- * Centralizes the pass/fail logic so all planted-bug tests use the same criteria.
+ * 식별된 버그(planted-bug) 테스트의 통과 여부를 판정합니다.
+ * 판정 결과가 기준 임계값(Ground Truth)을 충족하는지 확인합니다.
  *
- * @param {{ detection_rate: number, false_positives: number, evidence_quality: number }} judgeResult
- * @param {{ minimum_detection: number, max_false_positives: number }} groundTruth
- * @returns {boolean}
+ * @param {{ detection_rate: number, false_positives: number, evidence_quality: number }} judgeResult - 판정 결과 데이터
+ * @param {{ minimum_detection: number, max_false_positives: number }} groundTruth - 기준 임계값
+ * @returns {boolean} 통과 여부
  */
 export function judgePassed(judgeResult, groundTruth) {
   return judgeResult.detection_rate >= groundTruth.minimum_detection
@@ -40,11 +40,11 @@ export function judgePassed(judgeResult, groundTruth) {
 // --- Comparison functions (exported for eval:compare CLI) ---
 
 /**
- * Extract tool call counts from a transcript.
- * Returns e.g. { Bash: 8, Read: 3, Write: 1 }.
+ * 트랜스크립트에서 도구 호출 횟수를 추출하여 요약합니다.
+ * 예: { Bash: 8, Read: 3, Write: 1 }.
  *
- * @param {any[]} transcript
- * @returns {Record<string, number>}
+ * @param {any[]} transcript - 분석할 트랜스크립트 배열
+ * @returns {Record<string, number>} 도구별 호출 횟수
  */
 export function extractToolSummary(transcript) {
   /** @type {Record<string, number>} */
@@ -64,14 +64,14 @@ export function extractToolSummary(transcript) {
 }
 
 /**
- * Find the most recent prior eval file for comparison.
- * Prefers same branch, falls back to any branch.
+ * 비교 분석을 위해 가장 최근의 이전 평가(eval) 파일을 찾습니다.
+ * 가급적 동일한 브랜치를 선호하며, 없는 경우 다른 브랜치의 최신 파일을 선택합니다.
  *
- * @param {string} evalDir
- * @param {string} tier
- * @param {string} branch
- * @param {string} excludeFile
- * @returns {string | null}
+ * @param {string} evalDir - 평가 결과 파일들이 저장된 디렉토리
+ * @param {string} tier - 평가 티어 (e2e, llm-judge 등)
+ * @param {string} branch - 현재 브랜치 이름
+ * @param {string} excludeFile - 검색에서 제외할 현재 파일 경로
+ * @returns {string | null} 이전 평가 파일 경로 또는 없는 경우 null
  */
 export function findPreviousRun(evalDir, tier, branch, excludeFile) {
   let files;
@@ -109,13 +109,13 @@ export function findPreviousRun(evalDir, tier, branch, excludeFile) {
 }
 
 /**
- * Compare two eval results. Matches tests by name.
+ * 두 평가 결과를 비교 분석합니다. 테스트 이름을 기준으로 매칭을 수행합니다.
  *
- * @param {object} before
- * @param {object} after
- * @param {string} beforeFile
- * @param {string} afterFile
- * @returns {object}
+ * @param {object} before - 이전 평가 데이터
+ * @param {object} after - 현재 평가 데이터
+ * @param {string} beforeFile - 이전 평가 파일 경로
+ * @param {string} afterFile - 현재 평가 파일 경로
+ * @returns {object} 개선, 퇴보, 비용 변화 등을 포함한 비교 결과 객체
  */
 export function compareEvalResults(before, after, beforeFile, afterFile) {
   /** @type {object[]} */
@@ -214,10 +214,10 @@ export function compareEvalResults(before, after, beforeFile, afterFile) {
 }
 
 /**
- * Format a ComparisonResult as a readable string.
+ * 비교 분석 결과(ComparisonResult)를 사람이 읽기 좋은 형식의 문자열로 변환합니다.
  *
- * @param {object} c
- * @returns {string}
+ * @param {object} c - 비교 결과 객체
+ * @returns {string} 포맷팅된 결과 문자열
  */
 export function formatComparison(c) {
   const lines = [];
@@ -332,11 +332,11 @@ export function formatComparison(c) {
 }
 
 /**
- * Generate human-readable commentary interpreting comparison deltas.
- * Pure function — analyzes the numbers and explains what they mean.
+ * 비교 분석 결과의 수치 데이터를 해석하여 사람이 이해하기 쉬운 논평(Commentary)을 생성합니다.
+ * 퇴보(Regression), 수정(Fixed), 효율성 변화 등을 요약하여 제공합니다.
  *
- * @param {object} c
- * @returns {string[]}
+ * @param {object} c - 비교 결과 객체
+ * @returns {string[]} 해석된 논평 문장들의 배열
  */
 export function generateCommentary(c) {
   const notes = [];
@@ -502,6 +502,9 @@ function getProjectName() {
   }
 }
 
+/**
+ * 테스트 결과를 수집하고 파일로 저장하며, 이전 실행 결과와 비교 분석을 수행하는 클래스입니다.
+ */
 export class EvalCollector {
   /** @type {'e2e' | 'llm-judge'} */
   #tier;
@@ -515,8 +518,10 @@ export class EvalCollector {
   #createdAt = Date.now();
 
   /**
-   * @param {'e2e' | 'llm-judge'} tier
-   * @param {string} [evalDir]
+   * EvalCollector 인스턴스를 생성합니다.
+   * 
+   * @param {'e2e' | 'llm-judge'} tier - 평가 티어
+   * @param {string} [evalDir] - 결과 저장 디렉토리
    */
   constructor(tier, evalDir) {
     this.#tier = tier;
@@ -524,14 +529,19 @@ export class EvalCollector {
   }
 
   /**
-   * @param {object} entry
+   * 완료된 테스트 항목을 추가하고 중간 결과를 저장합니다.
+   * 
+   * @param {object} entry - 테스트 항목 결과 데이터
    */
   addTest(entry) {
     this.#tests.push(entry);
     this.savePartial();
   }
 
-  /** Write incremental results after each test. Atomic write, non-fatal. */
+  /** 
+   * 중간 결과를 파일로 저장합니다. 테스트가 진행되는 동안 점진적으로 기록됩니다.
+   * 원자적(atomic) 쓰기를 수행하며 실패 시에도 무시됩니다.
+   */
   savePartial() {
     try {
       const git = getGitInfo();
@@ -566,7 +576,10 @@ export class EvalCollector {
   }
 
   /**
-   * @returns {Promise<string>}
+   * 전체 평가 과정을 마무리하고 최종 결과 파일을 생성합니다.
+   * 결과 요약표를 출력하고 이전 실행 결과와의 자동 비교 분석을 수행합니다.
+   * 
+   * @returns {Promise<string>} 생성된 최종 결과 파일 경로
    */
   async finalize() {
     if (this.#finalized) return '';
