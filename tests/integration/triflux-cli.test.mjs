@@ -114,6 +114,24 @@ describe("triflux CLI JSON and schema surface", { timeout: 30000 }, () => {
     assert.ok(payload.checks.some((check) => check.name === "warmup-cache"));
   });
 
+  it("doctor --json은 Serena MCP project binding / timeout 진단을 포함해야 한다", () => {
+    const homeDir = createHomeDir();
+    writeFileSync(join(homeDir, ".codex", "config.toml"), [
+      "[mcp_servers.serena]",
+      'command = "uvx"',
+      'args = ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server", "--context", "codex"]',
+      'startup_timeout_sec = 10',
+      "",
+    ].join("\n"), "utf8");
+
+    const payload = parseStdoutJson(runCli(["doctor", "--json"], { homeDir }));
+    const serenaCheck = payload.checks.find((check) => check.name === "serena-mcp");
+    assert.ok(serenaCheck, "serena-mcp check missing");
+    assert.equal(serenaCheck.status, "issues");
+    assert.equal(serenaCheck.project_binding, false);
+    assert.equal(serenaCheck.startup_timeout_sec, 10);
+  });
+
   it("multi status --json은 팀 상태가 없을 때 offline JSON을 반환해야 한다", () => {
     const result = runCli(["multi", "status", "--json"]);
     const payload = parseStdoutJson(result);
