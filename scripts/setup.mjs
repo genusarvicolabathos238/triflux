@@ -572,6 +572,17 @@ function ensureHooksInSettings({
   for (const hookSpec of managedHooks) {
     if (!Array.isArray(settings.hooks[hookSpec.event])) settings.hooks[hookSpec.event] = [];
     const eventEntries = settings.hooks[hookSpec.event];
+
+    // hook-orchestrator가 이미 등록된 이벤트는 건너뜀.
+    // orchestrator가 hook-registry.json에서 체이닝하므로 개별 등록하면 이중 실행됨.
+    const hasOrchestrator = eventEntries.some((entry) =>
+      Array.isArray(entry.hooks) &&
+      entry.hooks.some((hook) =>
+        typeof hook?.command === "string" && hook.command.includes("hook-orchestrator"),
+      ),
+    );
+    if (hasOrchestrator) continue;
+
     const expectedCommand = buildManagedHookCommand(hookSpec.fileName, { pluginRoot, nodePath });
     const expectedNormalizedCommand = normalizeCommand(expectedCommand);
 

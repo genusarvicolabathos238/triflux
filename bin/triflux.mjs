@@ -954,11 +954,41 @@ function computeHookCoverage(settings, managedHooks) {
     total: managedHooks.length,
     registered: 0,
     missing: [],
+    duplicates: [],
   };
 
   const hooksByEvent = settings?.hooks && typeof settings.hooks === "object" ? settings.hooks : {};
+
+  // 이벤트별 orchestrator 존재 여부를 캐시
+  const orchestratorByEvent = {};
+  for (const [event, entries] of Object.entries(hooksByEvent)) {
+    orchestratorByEvent[event] = Array.isArray(entries) && entries.some((entry) =>
+      Array.isArray(entry?.hooks) &&
+      entry.hooks.some((hook) =>
+        typeof hook?.command === "string" && hook.command.includes("hook-orchestrator"),
+      ),
+    );
+  }
+
   for (const spec of managedHooks) {
     const eventEntries = Array.isArray(hooksByEvent[spec.event]) ? hooksByEvent[spec.event] : [];
+
+    // orchestrator가 있으면 registry 훅을 체이닝하므로 "registered"로 간주
+    if (orchestratorByEvent[spec.event]) {
+      coverage.registered++;
+
+      // 동시에 개별 훅도 직접 등록되어 있으면 → 이중 실행 (duplicate)
+      const directlyRegistered = eventEntries.some((entry) =>
+        Array.isArray(entry?.hooks) &&
+        entry.hooks.some((hook) => extractManagedHookFilename(hook?.command) === spec.fileName),
+      );
+      if (directlyRegistered) {
+        coverage.duplicates.push(toHookCoverageName(spec.fileName, spec.id));
+      }
+      continue;
+    }
+
+    // orchestrator 없으면 기존 방식: 개별 훅 직접 등록 확인
     const found = eventEntries.some((entry) =>
       Array.isArray(entry?.hooks) &&
       entry.hooks.some((hook) => extractManagedHookFilename(hook?.command) === spec.fileName),
@@ -2190,20 +2220,59 @@ async function cmdDoctor(options = {}) {
           }
         }
 
+        // 중복 훅 감지 + 자동 수정 (orchestrator와 개별 훅이 동시 등록된 경우)
+        if (coverage.duplicates && coverage.duplicates.length > 0) {
+          if (fix) {
+            try {
+              const fixedSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
+              let removed = 0;
+              for (const [event, entries] of Object.entries(fixedSettings.hooks || {})) {
+                if (!Array.isArray(entries)) continue;
+                const hasOrch = entries.some((e) =>
+                  Array.isArray(e?.hooks) &&
+                  e.hooks.some((h) => typeof h?.command === "string" && h.command.includes("hook-orchestrator")),
+                );
+                if (!hasOrch) continue;
+                // orchestrator가 아닌 엔트리 제거
+                const before = entries.length;
+                fixedSettings.hooks[event] = entries.filter((e) =>
+                  Array.isArray(e?.hooks) &&
+                  e.hooks.some((h) => typeof h?.command === "string" && h.command.includes("hook-orchestrator")),
+                );
+                removed += before - fixedSettings.hooks[event].length;
+              }
+              if (removed > 0) {
+                writeFileSync(settingsPath, JSON.stringify(fixedSettings, null, 2) + "\n", "utf8");
+                ok(`중복 훅 ${removed}개 엔트리 제거됨 (orchestrator가 체이닝)`);
+                const rechecked = JSON.parse(readFileSync(settingsPath, "utf8"));
+                coverage = computeHookCoverage(rechecked, managedHooks);
+              }
+            } catch (error) {
+              warn(`중복 훅 자동 제거 실패: ${error.message}`);
+            }
+          } else {
+            warn(`중복 훅 ${coverage.duplicates.length}개 감지 (이중 실행됨): ${coverage.duplicates.join(", ")}`);
+            warn("tfx doctor --fix 로 자동 제거하세요.");
+            issues += coverage.duplicates.length;
+          }
+        }
+
         report.hook_coverage = coverage;
-        const coverageStatus = coverage.missing.length === 0 ? "ok" : "issues";
+        const coverageStatus = coverage.missing.length === 0 && (!coverage.duplicates || coverage.duplicates.length === 0) ? "ok" : "issues";
         addDoctorCheck(report, {
           name: "hook-coverage",
           status: coverageStatus,
           total: coverage.total,
           registered: coverage.registered,
           missing: coverage.missing,
+          duplicates: coverage.duplicates || [],
           ...(coverage.missing.length > 0 ? { fix: "tfx doctor --fix 또는 tfx setup" } : {}),
+          ...(coverage.duplicates?.length > 0 ? { fix: "tfx doctor --fix 로 중복 훅 제거" } : {}),
         });
 
-        if (coverage.missing.length === 0) {
+        if (coverage.missing.length === 0 && (!coverage.duplicates || coverage.duplicates.length === 0)) {
           ok(`Hook Coverage: ${coverage.registered}/${coverage.total} registered`);
-        } else {
+        } else if (coverage.missing.length > 0) {
           fail(`Missing hooks: ${coverage.missing.join(", ")}`);
           issues += coverage.missing.length;
         }
